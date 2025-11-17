@@ -6,6 +6,8 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import json
 import os
 import sys
+from datetime import datetime, timedelta
+import numpy as np
 
 # Добавляем пути к нашим модулям
 sys.path.append('.')
@@ -23,6 +25,7 @@ class AirQualityAnalyzerGUI:
         self.data = None
         self.analysis_results = {}
         self.current_plots = []
+        self.regions = {}
 
         self.setup_ui()
 
@@ -71,7 +74,7 @@ class AirQualityAnalyzerGUI:
         view_frame.pack(fill='both', expand=True, padx=5, pady=5)
 
         # Treeview для отображения данных
-        columns = ("Дата", "SO2", "NO2", "RSPM", "SPM", "PM2.5")
+        columns = ("Дата", "Регион", "SO2", "NO2", "RSPM", "SPM", "PM2.5")
         self.data_tree = ttk.Treeview(view_frame, columns=columns, show='headings', height=15)
 
         for col in columns:
@@ -93,21 +96,39 @@ class AirQualityAnalyzerGUI:
         params_frame = ttk.LabelFrame(self.analysis_tab, text="Параметры анализа", padding=10)
         params_frame.pack(fill='x', padx=5, pady=5)
 
-        ttk.Label(params_frame, text="Целевой показатель:").grid(row=0, column=0, sticky='w', padx=5)
-        self.pollutant_var = tk.StringVar(value="so2")
-        pollutant_combo = ttk.Combobox(params_frame, textvariable=self.pollutant_var,
-                                       values=["so2", "no2", "rspm", "spm", "pm2_5"])
-        pollutant_combo.grid(row=0, column=1, sticky='w', padx=5)
+        # Первая строка параметров
+        row1 = ttk.Frame(params_frame)
+        row1.pack(fill='x', pady=2)
 
-        ttk.Label(params_frame, text="Метод анализа трендов:").grid(row=1, column=0, sticky='w', padx=5)
+        ttk.Label(row1, text="Целевой показатель:").pack(side='left', padx=5)
+        self.pollutant_var = tk.StringVar(value="so2")
+        self.pollutant_combo = ttk.Combobox(row1, textvariable=self.pollutant_var,
+                                            values=["so2", "no2", "rspm", "spm", "pm2_5"])
+        self.pollutant_combo.pack(side='left', padx=5)
+
+        ttk.Label(row1, text="Регион:").pack(side='left', padx=5)
+        self.region_var = tk.StringVar(value="Все регионы")
+        self.region_combo = ttk.Combobox(row1, textvariable=self.region_var)
+        self.region_combo.pack(side='left', padx=5)
+
+        # Вторая строка параметров
+        row2 = ttk.Frame(params_frame)
+        row2.pack(fill='x', pady=2)
+
+        ttk.Label(row2, text="Метод анализа:").pack(side='left', padx=5)
         self.trend_method_var = tk.StringVar(value="composite")
-        trend_combo = ttk.Combobox(params_frame, textvariable=self.trend_method_var,
+        trend_combo = ttk.Combobox(row2, textvariable=self.trend_method_var,
                                    values=["linear", "moving_avg", "decomposition", "composite"])
-        trend_combo.grid(row=1, column=1, sticky='w', padx=5)
+        trend_combo.pack(side='left', padx=5)
+
+        ttk.Label(row2, text="Горизонт прогноза (ч):").pack(side='left', padx=5)
+        self.forecast_horizon_var = tk.StringVar(value="24")
+        ttk.Spinbox(row2, from_=1, to=168, textvariable=self.forecast_horizon_var,
+                    width=5).pack(side='left', padx=5)
 
         # Кнопки анализа
         button_frame = ttk.Frame(params_frame)
-        button_frame.grid(row=2, column=0, columnspan=2, pady=10)
+        button_frame.pack(fill='x', pady=10)
 
         ttk.Button(button_frame, text="Анализ трендов",
                    command=self.analyze_trends).pack(side='left', padx=5)
@@ -131,19 +152,64 @@ class AirQualityAnalyzerGUI:
         self.notebook.add(self.viz_tab, text="Визуализация")
 
         # Фрейм управления визуализацией
-        control_frame = ttk.LabelFrame(self.viz_tab, text="Управление визуализацией", padding=10)
+        control_frame = ttk.LabelFrame(self.viz_tab, text="Параметры визуализации", padding=10)
         control_frame.pack(fill='x', padx=5, pady=5)
 
-        ttk.Button(control_frame, text="Временной ряд",
-                   command=self.plot_timeseries).pack(side='left', padx=5)
-        ttk.Button(control_frame, text="Распределение",
-                   command=self.plot_distribution).pack(side='left', padx=5)
-        ttk.Button(control_frame, text="Сезонность",
-                   command=self.plot_seasonal).pack(side='left', padx=5)
-        ttk.Button(control_frame, text="Дашборд AQI",
-                   command=self.plot_aqi).pack(side='left', padx=5)
-        ttk.Button(control_frame, text="Очистить графики",
-                   command=self.clear_plots).pack(side='left', padx=5)
+        # Строка выбора параметров
+        params_row = ttk.Frame(control_frame)
+        params_row.pack(fill='x', pady=5)
+
+        ttk.Label(params_row, text="Показатель:").pack(side='left', padx=5)
+        self.viz_pollutant_var = tk.StringVar(value="so2")
+        viz_pollutant_combo = ttk.Combobox(params_row, textvariable=self.viz_pollutant_var,
+                                           values=["so2", "no2", "rspm", "spm", "pm2_5"])
+        viz_pollutant_combo.pack(side='left', padx=5)
+
+        ttk.Label(params_row, text="Регион:").pack(side='left', padx=5)
+        self.viz_region_var = tk.StringVar(value="Все регионы")
+        self.viz_region_combo = ttk.Combobox(params_row, textvariable=self.viz_region_var)
+        self.viz_region_combo.pack(side='left', padx=5)
+
+        # Строка временного фильтра
+        time_row = ttk.Frame(control_frame)
+        time_row.pack(fill='x', pady=5)
+
+        ttk.Label(time_row, text="Период:").pack(side='left', padx=5)
+
+        # Фрейм для полей ввода дат
+        date_frame = ttk.Frame(time_row)
+        date_frame.pack(side='left', padx=5)
+
+        ttk.Label(date_frame, text="Нач. дата:").pack(side='left')
+        self.start_date_var = tk.StringVar()
+        ttk.Entry(date_frame, textvariable=self.start_date_var, width=12).pack(side='left', padx=2)
+
+        ttk.Label(date_frame, text="Кон. дата:").pack(side='left', padx=(10, 0))
+        self.end_date_var = tk.StringVar()
+        ttk.Entry(date_frame, textvariable=self.end_date_var, width=12).pack(side='left', padx=2)
+
+        ttk.Button(time_row, text="Применить фильтр",
+                   command=self.apply_viz_filters).pack(side='left', padx=10)
+
+        # Подсказка по формату дат
+        ttk.Label(time_row, text="Формат: ГГГГ-ММ-ДД", foreground="gray").pack(side='left', padx=5)
+
+        # Строка кнопок графиков
+        buttons_row = ttk.Frame(control_frame)
+        buttons_row.pack(fill='x', pady=5)
+
+        ttk.Button(buttons_row, text="Временной ряд",
+                   command=self.plot_timeseries).pack(side='left', padx=2)
+        ttk.Button(buttons_row, text="Распределение",
+                   command=self.plot_distribution).pack(side='left', padx=2)
+        ttk.Button(buttons_row, text="Сезонность",
+                   command=self.plot_seasonal).pack(side='left', padx=2)
+        ttk.Button(buttons_row, text="Дашборд AQI",
+                   command=self.plot_aqi).pack(side='left', padx=2)
+        ttk.Button(buttons_row, text="Тепловая карта",
+                   command=self.plot_heatmap).pack(side='left', padx=2)
+        ttk.Button(buttons_row, text="Очистить графики",
+                   command=self.clear_plots).pack(side='left', padx=2)
 
         # Фрейм для графиков
         self.plot_frame = ttk.Frame(self.viz_tab)
@@ -194,23 +260,13 @@ class AirQualityAnalyzerGUI:
                 return
 
             # Обновление информации
-            info_text = f"✅ Успешно загружено: {validation_report['records_loaded']} записей\n"
-            info_text += f"📅 Период: {validation_report.get('data_period', 'Не определен')}\n"
-            info_text += f"📊 Колонки: {', '.join(self.data.columns)}\n\n"
-
-            # Статистика по показателям
-            numeric_columns = ['so2', 'no2', 'rspm', 'spm', 'pm2_5']
-            for col in numeric_columns:
-                if col in self.data.columns:
-                    non_null = self.data[col].notna().sum()
-                    percentage = (non_null / len(self.data)) * 100
-                    info_text += f"{col}: {non_null} записей ({percentage:.1f}%)\n"
-
-            self.info_text.delete(1.0, tk.END)
-            self.info_text.insert(1.0, info_text)
+            self.update_data_info(validation_report)
 
             # Обновление treeview
             self.update_data_treeview()
+
+            # Обновление регионов
+            self.update_regions()
 
             # Обновление выбора показателей
             self.update_pollutant_choices()
@@ -220,22 +276,139 @@ class AirQualityAnalyzerGUI:
         except Exception as e:
             messagebox.showerror("Ошибка", f"Ошибка загрузки: {str(e)}")
 
-    def update_data_treeview(self):
+    def update_data_info(self, validation_report):
+        """Обновление информации о данных"""
+        info_text = f"✅ Успешно загружено: {validation_report['records_loaded']} записей\n"
+
+        if 'data_period' in validation_report and validation_report['data_period']:
+            period = validation_report['data_period']
+            info_text += f"📅 Период: {period.get('start', 'N/A')} - {period.get('end', 'N/A')}\n"
+
+        info_text += f"📊 Колонки: {', '.join(self.data.columns)}\n\n"
+
+        # Статистика по показателям
+        numeric_columns = ['so2', 'no2', 'rspm', 'spm', 'pm2_5']
+        for col in numeric_columns:
+            if col in self.data.columns:
+                non_null = self.data[col].notna().sum()
+                percentage = (non_null / len(self.data)) * 100
+                if non_null > 0:
+                    avg = self.data[col].mean()
+                    info_text += f"{col}: {non_null} записей ({percentage:.1f}%), среднее: {avg:.2f}\n"
+
+        self.info_text.delete(1.0, tk.END)
+        self.info_text.insert(1.0, info_text)
+
+    def update_regions(self):
+        """Обновление списка регионов"""
+        if self.data is None:
+            return
+
+        # Поиск колонки с регионами
+        region_columns = ['state', 'city', 'location', 'region', 'area']
+        region_col = None
+
+        for col in region_columns:
+            if col in self.data.columns:
+                region_col = col
+                break
+
+        if region_col:
+            regions = self.data[region_col].dropna().unique()
+            self.regions = {region: region for region in regions}
+
+            # Обновление комбобоксов
+            region_values = ["Все регионы"] + list(regions)
+            self.region_combo['values'] = region_values
+            self.viz_region_combo['values'] = region_values
+        else:
+            self.regions = {"Все данные": "Все данные"}
+            self.region_combo['values'] = ["Все регионы"]
+            self.viz_region_combo['values'] = ["Все регионы"]
+
+
+    def get_filtered_data(self, use_viz_filters=False):
+        """Получить отфильтрованные данные"""
+        if self.data is None:
+            return None
+
+        filtered_data = self.data.copy()
+
+        # Выбор источника фильтров
+        if use_viz_filters:
+            region_var = self.viz_region_var
+            start_date_var = self.start_date_var
+            end_date_var = self.end_date_var
+        else:
+            region_var = self.region_var
+            start_date_var = tk.StringVar()  # Пустые для анализа
+            end_date_var = tk.StringVar()
+
+        # Фильтрация по региону
+        current_region = region_var.get()
+        if current_region != "Все регионы":
+            region_columns = ['state', 'city', 'location', 'region', 'area']
+            for col in region_columns:
+                if col in filtered_data.columns:
+                    filtered_data = filtered_data[filtered_data[col] == current_region]
+                    break
+
+        # Фильтрация по дате (только для визуализации)
+        if use_viz_filters and 'date' in filtered_data.columns:
+            try:
+                start_date = start_date_var.get()
+                end_date = end_date_var.get()
+
+                if start_date:
+                    start_dt = pd.to_datetime(start_date)
+                    filtered_data = filtered_data[filtered_data['date'] >= start_dt]
+
+                if end_date:
+                    end_dt = pd.to_datetime(end_date)
+                    filtered_data = filtered_data[filtered_data['date'] <= end_dt]
+
+            except Exception as e:
+                print(f"Ошибка фильтрации дат: {e}")
+
+        return filtered_data
+
+    def apply_viz_filters(self):
+        """Применить фильтры для визуализации"""
+        filtered_data = self.get_filtered_data(use_viz_filters=True)
+        if filtered_data is not None:
+            messagebox.showinfo("Успех", f"Фильтры применены. Отобрано записей: {len(filtered_data)}")
+
+    def update_data_treeview(self, data=None):
         """Обновление отображения данных в treeview"""
+        if data is None:
+            data = self.data
+
+        if data is None:
+            return
+
         # Очистка существующих данных
         for item in self.data_tree.get_children():
             self.data_tree.delete(item)
 
-        # Добавление первых 100 записей для предпросмотра
-        preview_data = self.data.head(100)
+        # Добавление записей для предпросмотра
+        preview_data = data.head(100)
 
         for _, row in preview_data.iterrows():
             values = []
-            for col in ["Дата", "SO2", "NO2", "RSPM", "SPM", "PM2.5"]:
-                if col == "Дата" and 'date' in self.data.columns:
+            for col_name in ["Дата", "Регион", "SO2", "NO2", "RSPM", "SPM", "PM2.5"]:
+                if col_name == "Дата" and 'date' in data.columns:
                     values.append(str(row['date'])[:19] if pd.notna(row.get('date')) else "")
-                elif col.lower() in self.data.columns:
-                    val = row[col.lower()]
+                elif col_name == "Регион":
+                    # Поиск региона в данных
+                    region = "N/A"
+                    region_columns = ['state', 'city', 'location', 'region', 'area']
+                    for r_col in region_columns:
+                        if r_col in data.columns and pd.notna(row.get(r_col)):
+                            region = str(row[r_col])
+                            break
+                    values.append(region)
+                elif col_name.lower() in data.columns:
+                    val = row[col_name.lower()]
                     values.append(f"{val:.2f}" if pd.notna(val) else "")
                 else:
                     values.append("")
@@ -251,10 +424,13 @@ class AirQualityAnalyzerGUI:
 
         if available_pollutants:
             self.pollutant_var.set(available_pollutants[0])
+            self.pollutant_combo['values'] = available_pollutants
+            self.viz_pollutant_var.set(available_pollutants[0])
 
     def analyze_trends(self):
         """Анализ трендов"""
-        if self.data is None:
+        data = self.get_filtered_data()
+        if data is None:
             messagebox.showwarning("Предупреждение", "Сначала загрузите данные")
             return
 
@@ -263,7 +439,7 @@ class AirQualityAnalyzerGUI:
 
         try:
             # Подготовка данных для анализа
-            analysis_data = self.data.copy()
+            analysis_data = data.copy()
             if 'date' in analysis_data.columns:
                 analysis_data = analysis_data.rename(columns={'date': 'timestamp'})
 
@@ -271,7 +447,8 @@ class AirQualityAnalyzerGUI:
             trends = ac.calculate_pollution_trend(analysis_data, pollutant, method)
 
             # Отображение результатов
-            result_text = f"📈 АНАЛИЗ ТРЕНДОВ: {pollutant.upper()}\n"
+            region_info = f" ({self.region_var.get()})" if self.region_var.get() != "Все регионы" else ""
+            result_text = f"📈 АНАЛИЗ ТРЕНДОВ: {pollutant.upper()}{region_info}\n"
             result_text += f"Метод: {method}\n"
             result_text += f"Период анализа: {trends.get('period_days', 'N/A')} дней\n"
             result_text += f"Точек данных: {trends.get('data_points', 'N/A')}\n\n"
@@ -295,23 +472,28 @@ class AirQualityAnalyzerGUI:
 
     def analyze_forecast(self):
         """Прогнозирование уровней загрязнения"""
-        if self.data is None:
+        data = self.get_filtered_data()
+        if data is None:
             messagebox.showwarning("Предупреждение", "Сначала загрузите данные")
             return
 
         pollutant = self.pollutant_var.get()
 
         try:
+            horizon = int(self.forecast_horizon_var.get())
+
             # Подготовка данных
-            analysis_data = self.data.copy()
+            analysis_data = data.copy()
             if 'date' in analysis_data.columns:
                 analysis_data = analysis_data.rename(columns={'date': 'timestamp'})
 
             # Прогнозирование
-            forecast = ac.predict_future_levels(analysis_data, pollutant, forecast_horizon=24, method='hybrid')
+            forecast = ac.predict_future_levels(analysis_data, pollutant,
+                                                forecast_horizon=horizon, method='hybrid')
 
             # Отображение результатов
-            result_text = f"🔮 ПРОГНОЗ: {pollutant.upper()}\n"
+            region_info = f" ({self.region_var.get()})" if self.region_var.get() != "Все регионы" else ""
+            result_text = f"🔮 ПРОГНОЗ: {pollutant.upper()}{region_info}\n"
             result_text += f"Горизонт: {forecast.get('forecast_horizon', 'N/A')} часов\n"
             result_text += f"Метод: {forecast.get('method_used', 'N/A')}\n\n"
 
@@ -333,29 +515,37 @@ class AirQualityAnalyzerGUI:
 
     def calculate_aqi(self):
         """Расчет индекса качества воздуха"""
-        if self.data is None:
+        data = self.get_filtered_data()
+        if data is None:
             messagebox.showwarning("Предупреждение", "Сначала загрузите данные")
             return
 
         try:
             # Расчет AQI
-            aqi_results = ac.compute_air_quality_index(self.data)
+            aqi_results = ac.compute_air_quality_index(data)
 
             # Отображение результатов
-            result_text = "🌍 ИНДЕКС КАЧЕСТВА ВОЗДУХА (AQI)\n\n"
+            region_info = f" ({self.region_var.get()})" if self.region_var.get() != "Все регионы" else ""
+            result_text = f"🌍 ИНДЕКС КАЧЕСТВА ВОЗДУХА (AQI){region_info}\n\n"
 
             if 'overall' in aqi_results:
                 overall = aqi_results['overall']
                 result_text += f"ОБЩИЙ AQI: {overall['aqi']} - {overall['category']}\n"
                 result_text += f"Основной загрязнитель: {overall['dominant_pollutant']}\n\n"
 
-            for poll, data in aqi_results.items():
+            # Показываем все доступные загрязнители
+            for poll, poll_data in aqi_results.items():
                 if poll != 'overall':
                     result_text += f"{poll}:\n"
-                    result_text += f"  Концентрация: {data.get('concentration', 0):.2f} {data.get('unit', '')}\n"
-                    result_text += f"  AQI: {data.get('aqi', 0)}\n"
-                    result_text += f"  Категория: {data.get('category', 'N/A')}\n"
-                    result_text += f"  Рекомендации: {data.get('health_advice', 'N/A')}\n\n"
+                    result_text += f"  Концентрация: {poll_data.get('concentration', 0):.2f} {poll_data.get('unit', '')}\n"
+                    result_text += f"  AQI: {poll_data.get('aqi', 0)}\n"
+                    result_text += f"  Категория: {poll_data.get('category', 'N/A')}\n"
+                    result_text += f"  Рекомендации: {poll_data.get('health_advice', 'N/A')}\n\n"
+
+            # Если нет результатов AQI
+            if len(aqi_results) <= 1:  # Только overall или пусто
+                result_text += "⚠ Не удалось рассчитать AQI для доступных показателей.\n"
+                result_text += "Проверьте наличие данных по SO2, NO2, PM2.5, PM10.\n"
 
             self.analysis_results['aqi'] = aqi_results
             current_text = self.analysis_text.get(1.0, tk.END)
@@ -363,11 +553,14 @@ class AirQualityAnalyzerGUI:
             self.analysis_text.insert(1.0, current_text + "\n\n" + result_text)
 
         except Exception as e:
-            messagebox.showerror("Ошибка", f"Ошибка расчета AQI: {str(e)}")
+            error_msg = f"Ошибка расчета AQI: {str(e)}"
+            print(error_msg)  # Для отладки
+            messagebox.showerror("Ошибка", error_msg)
 
     def analyze_seasonal(self):
         """Сезонный анализ"""
-        if self.data is None:
+        data = self.get_filtered_data()
+        if data is None:
             messagebox.showwarning("Предупреждение", "Сначала загрузите данные")
             return
 
@@ -375,20 +568,35 @@ class AirQualityAnalyzerGUI:
 
         try:
             # Сезонный анализ
-            seasonal = ac.analyze_seasonal_patterns(self.data, pollutant, period='daily')
+            seasonal = ac.analyze_seasonal_patterns(data, pollutant, period='daily')
 
             # Отображение результатов
-            result_text = f"📅 СЕЗОННЫЙ АНАЛИЗ: {pollutant.upper()}\n\n"
+            region_info = f" ({self.region_var.get()})" if self.region_var.get() != "Все регионы" else ""
+            result_text = f"📅 СЕЗОННЫЙ АНАЛИЗ: {pollutant.upper()}{region_info}\n\n"
 
-            if 'hourly_patterns' in seasonal:
-                result_text += "Суточные паттерны:\n"
-                for pattern in seasonal['hourly_patterns'][:6]:  # Первые 6 часов
-                    result_text += f"  {int(pattern['hour'])}:00 - {pattern['mean']:.2f}\n"
+            if 'error' in seasonal:
+                result_text += f"❌ Ошибка: {seasonal['error']}\n"
+            else:
+                # Базовая статистика
+                if 'basic_stats' in seasonal:
+                    stats = seasonal['basic_stats']
+                    result_text += f"Общая статистика:\n"
+                    result_text += f"  Среднее: {stats.get('mean', 0):.2f}\n"
+                    result_text += f"  Стандартное отклонение: {stats.get('std', 0):.2f}\n"
+                    result_text += f"  Минимум: {stats.get('min', 0):.2f}\n"
+                    result_text += f"  Максимум: {stats.get('max', 0):.2f}\n"
+                    result_text += f"  Записей: {stats.get('total_records', 0)}\n\n"
 
-            if 'peak_hour' in seasonal:
-                peak = seasonal['peak_hour']
-                result_text += f"\nПиковый час: {peak['hour']}:00\n"
-                result_text += f"Концентрация: {peak['concentration']:.2f}\n"
+                if 'hourly_patterns' in seasonal:
+                    result_text += "Суточные паттерны (первые 6 часов):\n"
+                    patterns = seasonal['hourly_patterns']
+                    for pattern in patterns[:6]:
+                        result_text += f"  {int(pattern['hour'])}:00 - {pattern['mean']:.2f} (σ={pattern.get('std', 0):.2f})\n"
+
+                if 'peak_hour' in seasonal:
+                    peak = seasonal['peak_hour']
+                    result_text += f"\n🏆 Пиковый час: {peak['hour']}:00\n"
+                    result_text += f"Концентрация: {peak['concentration']:.2f}\n"
 
             self.analysis_results['seasonal'] = seasonal
             current_text = self.analysis_text.get(1.0, tk.END)
@@ -396,31 +604,36 @@ class AirQualityAnalyzerGUI:
             self.analysis_text.insert(1.0, current_text + "\n\n" + result_text)
 
         except Exception as e:
-            messagebox.showerror("Ошибка", f"Ошибка сезонного анализа: {str(e)}")
+            error_msg = f"Ошибка сезонного анализа: {str(e)}"
+            print(error_msg)  # Для отладки
+            messagebox.showerror("Ошибка", error_msg)
 
     def plot_timeseries(self):
         """Построение графика временного ряда"""
-        if self.data is None:
+        data = self.get_filtered_data(use_viz_filters=True)
+        if data is None:
             messagebox.showwarning("Предупреждение", "Сначала загрузите данные")
             return
 
-        pollutant = self.pollutant_var.get()
+        pollutant = self.viz_pollutant_var.get()
 
         try:
-            # Подготовка данных
-            plot_data = self.data.copy()
-            if 'date' in plot_data.columns:
-                plot_data = plot_data.rename(columns={'date': 'timestamp'})
-
             # Создание графика
-            fig, ax = plt.subplots(figsize=(10, 5))
+            fig, ax = plt.subplots(figsize=(12, 6))
 
-            if 'timestamp' in plot_data.columns:
-                valid_data = plot_data[['timestamp', pollutant]].dropna()
-                ax.plot(valid_data['timestamp'], valid_data[pollutant],
-                        alpha=0.7, linewidth=1, label=pollutant)
+            if 'date' in data.columns:
+                valid_data = data[['date', pollutant]].dropna()
+                ax.plot(valid_data['date'], valid_data[pollutant],
+                        alpha=0.7, linewidth=1, label=pollutant, color='steelblue')
 
-                ax.set_title(f'Временной ряд: {pollutant}')
+                region_info = f" ({self.viz_region_var.get()})" if self.viz_region_var.get() != "Все регионы" else ""
+                time_info = ""
+                if self.start_date_var.get() or self.end_date_var.get():
+                    start = self.start_date_var.get() or "начало"
+                    end = self.end_date_var.get() or "конец"
+                    time_info = f" [{start} - {end}]"
+
+                ax.set_title(f'Временной ряд: {pollutant}{region_info}{time_info}')
                 ax.set_xlabel('Дата')
                 ax.set_ylabel('Концентрация')
                 ax.legend()
@@ -437,19 +650,27 @@ class AirQualityAnalyzerGUI:
 
     def plot_distribution(self):
         """Построение гистограммы распределения"""
-        if self.data is None:
+        data = self.get_filtered_data(use_viz_filters=True)
+        if data is None:
             messagebox.showwarning("Предупреждение", "Сначала загрузите данные")
             return
 
-        pollutant = self.pollutant_var.get()
+        pollutant = self.viz_pollutant_var.get()
 
         try:
-            fig, ax = plt.subplots(figsize=(10, 5))
+            fig, ax = plt.subplots(figsize=(10, 6))
 
-            valid_data = self.data[pollutant].dropna()
-            ax.hist(valid_data, bins=50, alpha=0.7, edgecolor='black')
+            valid_data = data[pollutant].dropna()
+            ax.hist(valid_data, bins=50, alpha=0.7, edgecolor='black', color='lightblue')
 
-            ax.set_title(f'Распределение: {pollutant}')
+            region_info = f" ({self.viz_region_var.get()})" if self.viz_region_var.get() != "Все регионы" else ""
+            time_info = ""
+            if self.start_date_var.get() or self.end_date_var.get():
+                start = self.start_date_var.get() or "начало"
+                end = self.end_date_var.get() or "конец"
+                time_info = f" [{start} - {end}]"
+
+            ax.set_title(f'Распределение: {pollutant}{region_info}{time_info}')
             ax.set_xlabel('Концентрация')
             ax.set_ylabel('Частота')
             ax.grid(True, alpha=0.3)
@@ -468,7 +689,7 @@ class AirQualityAnalyzerGUI:
 
     def plot_seasonal(self):
         """Построение графика сезонности"""
-        if self.data is None or 'seasonal' not in self.analysis_results:
+        if 'seasonal' not in self.analysis_results:
             messagebox.showwarning("Предупреждение", "Сначала выполните сезонный анализ")
             return
 
@@ -497,6 +718,55 @@ class AirQualityAnalyzerGUI:
 
         except Exception as e:
             messagebox.showerror("Ошибка", f"Ошибка построения дашборда AQI: {str(e)}")
+
+    def plot_heatmap(self):
+        """Построение тепловой карты корреляций"""
+        data = self.get_filtered_data(use_viz_filters=True)
+        if data is None:
+            messagebox.showwarning("Предупреждение", "Сначала загрузите данные")
+            return
+
+        try:
+            # Выбор числовых колонок для корреляции
+            numeric_cols = ['so2', 'no2', 'rspm', 'spm', 'pm2_5']
+            available_cols = [col for col in numeric_cols if col in data.columns]
+
+            if len(available_cols) < 2:
+                messagebox.showwarning("Предупреждение", "Недостаточно данных для тепловой карты")
+                return
+
+            corr_data = data[available_cols].corr()
+
+            fig, ax = plt.subplots(figsize=(8, 6))
+            im = ax.imshow(corr_data, cmap='coolwarm', aspect='auto', vmin=-1, vmax=1)
+
+            # Добавление значений в ячейки
+            for i in range(len(available_cols)):
+                for j in range(len(available_cols)):
+                    text = ax.text(j, i, f'{corr_data.iloc[i, j]:.2f}',
+                                   ha="center", va="center", color="black", fontweight='bold')
+
+            ax.set_xticks(range(len(available_cols)))
+            ax.set_yticks(range(len(available_cols)))
+            ax.set_xticklabels(available_cols)
+            ax.set_yticklabels(available_cols)
+
+            region_info = f" ({self.viz_region_var.get()})" if self.viz_region_var.get() != "Все регионы" else ""
+            time_info = ""
+            if self.start_date_var.get() or self.end_date_var.get():
+                start = self.start_date_var.get() or "начало"
+                end = self.end_date_var.get() or "конец"
+                time_info = f" [{start} - {end}]"
+
+            ax.set_title(f'Корреляция показателей{region_info}{time_info}')
+
+            # Добавление цветовой шкалы
+            plt.colorbar(im, ax=ax)
+
+            self.display_plot(fig)
+
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Ошибка построения тепловой карты: {str(e)}")
 
     def display_plot(self, fig):
         """Отображение графика в GUI"""
@@ -535,10 +805,18 @@ class AirQualityAnalyzerGUI:
             )
 
             if file_path:
+                report = {
+                    'timestamp': datetime.now().isoformat(),
+                    'data_info': {
+                        'records': len(self.data) if self.data else 0,
+                        'pollutant': self.pollutant_var.get(),
+                        'region': self.region_var.get()
+                    },
+                    'analysis_results': self.make_serializable(self.analysis_results)
+                }
+
                 with open(file_path, 'w', encoding='utf-8') as f:
-                    # Преобразование в сериализуемый формат
-                    serializable_results = self.make_serializable(self.analysis_results)
-                    json.dump(serializable_results, f, ensure_ascii=False, indent=2)
+                    json.dump(report, f, ensure_ascii=False, indent=2)
 
                 messagebox.showinfo("Успех", f"Отчет сохранен: {file_path}")
 
@@ -577,7 +855,8 @@ class AirQualityAnalyzerGUI:
             summary_text += f"Записей: {len(self.data)}\n"
             if 'date' in self.data.columns:
                 summary_text += f"Период: {self.data['date'].min()} - {self.data['date'].max()}\n"
-            summary_text += f"Целевой показатель: {self.pollutant_var.get()}\n\n"
+            summary_text += f"Целевой показатель: {self.pollutant_var.get()}\n"
+            summary_text += f"Регион: {self.region_var.get()}\n\n"
 
             # Результаты анализа
             summary_text += "РЕЗУЛЬТАТЫ АНАЛИЗА:\n"
