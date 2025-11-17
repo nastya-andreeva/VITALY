@@ -6,6 +6,8 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import json
 import os
 import sys
+import threading
+import time
 from datetime import datetime, timedelta
 import numpy as np
 
@@ -14,6 +16,28 @@ sys.path.append('.')
 import data_manager as dm
 import analysis_core as ac
 import visualization_engine as ve
+
+
+class AnalysisThread(threading.Thread):
+    """Поток для выполнения анализа без блокировки GUI"""
+
+    def __init__(self, target, args=(), kwargs={}, callback=None):
+        super().__init__()
+        self.target = target
+        self.args = args
+        self.kwargs = kwargs
+        self.callback = callback
+        self.result = None
+        self.exception = None
+
+    def run(self):
+        try:
+            self.result = self.target(*self.args, **self.kwargs)
+        except Exception as e:
+            self.exception = e
+        finally:
+            if self.callback:
+                self.callback(self)
 
 
 class AirQualityAnalyzerGUI:
@@ -26,6 +50,12 @@ class AirQualityAnalyzerGUI:
         self.analysis_results = {}
         self.current_plots = []
         self.regions = {}
+        self.analysis_thread = None
+        self.is_analyzing = False
+
+        # Переменные для прогресс-бара
+        self.progress_var = tk.DoubleVar()
+        self.progress_label_var = tk.StringVar(value="Готов")
 
         self.setup_ui()
 
@@ -126,18 +156,40 @@ class AirQualityAnalyzerGUI:
         ttk.Spinbox(row2, from_=1, to=168, textvariable=self.forecast_horizon_var,
                     width=5).pack(side='left', padx=5)
 
+        # Прогресс-бар
+        progress_frame = ttk.Frame(params_frame)
+        progress_frame.pack(fill='x', pady=5)
+
+        self.progress_label = ttk.Label(progress_frame, textvariable=self.progress_label_var)
+        self.progress_label.pack(anchor='w')
+
+        self.progress_bar = ttk.Progressbar(progress_frame, variable=self.progress_var,
+                                            maximum=100, mode='determinate')
+        self.progress_bar.pack(fill='x', pady=2)
+
         # Кнопки анализа
         button_frame = ttk.Frame(params_frame)
         button_frame.pack(fill='x', pady=10)
 
-        ttk.Button(button_frame, text="Анализ трендов",
-                   command=self.analyze_trends).pack(side='left', padx=5)
-        ttk.Button(button_frame, text="Прогнозирование",
-                   command=self.analyze_forecast).pack(side='left', padx=5)
-        ttk.Button(button_frame, text="Расчет AQI",
-                   command=self.calculate_aqi).pack(side='left', padx=5)
-        ttk.Button(button_frame, text="Сезонный анализ",
-                   command=self.analyze_seasonal).pack(side='left', padx=5)
+        self.analyze_trends_btn = ttk.Button(button_frame, text="Анализ трендов",
+                                             command=self.analyze_trends)
+        self.analyze_trends_btn.pack(side='left', padx=5)
+
+        self.analyze_forecast_btn = ttk.Button(button_frame, text="Прогнозирование",
+                                               command=self.analyze_forecast)
+        self.analyze_forecast_btn.pack(side='left', padx=5)
+
+        self.calculate_aqi_btn = ttk.Button(button_frame, text="Расчет AQI",
+                                            command=self.calculate_aqi)
+        self.calculate_aqi_btn.pack(side='left', padx=5)
+
+        self.analyze_seasonal_btn = ttk.Button(button_frame, text="Сезонный анализ",
+                                               command=self.analyze_seasonal)
+        self.analyze_seasonal_btn.pack(side='left', padx=5)
+
+        self.cancel_analysis_btn = ttk.Button(button_frame, text="Отменить",
+                                              command=self.cancel_analysis, state='disabled')
+        self.cancel_analysis_btn.pack(side='left', padx=5)
 
         # Фрейм результатов анализа
         results_frame = ttk.LabelFrame(self.analysis_tab, text="Результаты анализа", padding=10)
@@ -238,6 +290,293 @@ class AirQualityAnalyzerGUI:
         self.summary_text = scrolledtext.ScrolledText(summary_frame, height=20, width=100)
         self.summary_text.pack(fill='both', expand=True)
 
+    def update_progress(self, value, label=""):
+        """Обновление прогресс-бара"""
+        self.progress_var.set(value)
+        if label:
+            self.progress_label_var.set(label)
+        self.root.update_idletasks()
+
+    def set_analysis_buttons_state(self, enabled):
+        """Включение/выключение кнопок анализа"""
+        state = 'normal' if enabled else 'disabled'
+        self.analyze_trends_btn.config(state=state)
+        self.analyze_forecast_btn.config(state=state)
+        self.calculate_aqi_btn.config(state=state)
+        self.analyze_seasonal_btn.config(state=state)
+        self.cancel_analysis_btn.config(state='normal' if not enabled else 'disabled')
+        self.is_analyzing = not enabled
+
+    def cancel_analysis(self):
+        """Отмена текущего анализа"""
+        if self.analysis_thread and self.analysis_thread.is_alive():
+            # В Python нет прямого способа остановить поток, но мы можем пометить его для отмены
+            self.update_progress(0, "Анализ отменен...")
+            self.set_analysis_buttons_state(True)
+
+    def analyze_in_thread(self, analysis_func, func_name, *args, **kwargs):
+        """Запуск анализа в отдельном потоке"""
+        if self.is_analyzing:
+            messagebox.showwarning("Предупреждение", "Уже выполняется другой анализ")
+            return
+
+        self.set_analysis_buttons_state(False)
+        self.update_progress(10, f"Запуск {func_name}...")
+
+        # Запуск в отдельном потоке
+        self.analysis_thread = AnalysisThread(
+            target=analysis_func,
+            args=args,
+            kwargs=kwargs,
+            callback=self.on_analysis_complete
+        )
+        self.analysis_thread.start()
+
+        # Запуск мониторинга прогресса
+        self.monitor_analysis_progress(func_name)
+
+    def monitor_analysis_progress(self, func_name):
+        """Мониторинг прогресса анализа"""
+        if self.analysis_thread and self.analysis_thread.is_alive():
+            # Имитация прогресса для длительных операций
+            current_progress = self.progress_var.get()
+            if current_progress < 80:
+                new_progress = current_progress + 5
+                self.update_progress(new_progress, f"Выполняется {func_name}...")
+                self.root.after(1000, lambda: self.monitor_analysis_progress(func_name))
+            else:
+                self.root.after(500, lambda: self.monitor_analysis_progress(func_name))
+
+    def on_analysis_complete(self, thread):
+        """Обработчик завершения анализа"""
+        self.set_analysis_buttons_state(True)
+
+        if thread.exception:
+            self.update_progress(0, "Ошибка")
+            messagebox.showerror("Ошибка", f"Ошибка при анализе: {thread.exception}")
+        else:
+            self.update_progress(100, "Завершено")
+            self.root.after(1000, lambda: self.update_progress(0, "Готов"))
+
+            # Обновляем UI с результатами
+            if hasattr(self, 'pending_update') and self.pending_update:
+                self.pending_update(thread.result)
+
+    def analyze_trends(self):
+        """Анализ трендов в отдельном потоке"""
+        data = self.get_filtered_data()
+        if data is None:
+            messagebox.showwarning("Предупреждение", "Сначала загрузите данные")
+            return
+
+        def trends_analysis():
+            self.update_progress(20, "Анализ трендов...")
+            analysis_data = data.copy()
+            if 'date' in analysis_data.columns:
+                analysis_data = analysis_data.rename(columns={'date': 'timestamp'})
+
+            result = ac.calculate_pollution_trend(
+                analysis_data,
+                self.pollutant_var.get(),
+                self.trend_method_var.get()
+            )
+            self.update_progress(80, "Формирование результатов...")
+            return result
+
+        self.analyze_in_thread(trends_analysis, "анализ трендов")
+
+        # Сохраняем функцию для обновления UI
+        self.pending_update = self.display_trends_results
+
+    def analyze_forecast(self):
+        """Прогнозирование в отдельном потоке"""
+        data = self.get_filtered_data()
+        if data is None:
+            messagebox.showwarning("Предупреждение", "Сначала загрузите данные")
+            return
+
+        def forecast_analysis():
+            self.update_progress(20, "Подготовка данных...")
+            horizon = int(self.forecast_horizon_var.get())
+            analysis_data = data.copy()
+
+            if 'date' in analysis_data.columns:
+                analysis_data = analysis_data.rename(columns={'date': 'timestamp'})
+
+            self.update_progress(40, "Построение прогноза...")
+            result = ac.predict_future_levels(
+                analysis_data,
+                self.pollutant_var.get(),
+                forecast_horizon=horizon,
+                method='hybrid'
+            )
+            self.update_progress(80, "Формирование результатов...")
+            return result
+
+        self.analyze_in_thread(forecast_analysis, "прогнозирование")
+        self.pending_update = self.display_forecast_results
+
+    def calculate_aqi(self):
+        """Расчет AQI в отдельном потоке"""
+        data = self.get_filtered_data()
+        if data is None:
+            messagebox.showwarning("Предупреждение", "Сначала загрузите данные")
+            return
+
+        def aqi_analysis():
+            self.update_progress(30, "Расчет индексов AQI...")
+            result = ac.compute_air_quality_index(data)
+            self.update_progress(80, "Формирование отчета...")
+            return result
+
+        self.analyze_in_thread(aqi_analysis, "расчет AQI")
+        self.pending_update = self.display_aqi_results
+
+    def analyze_seasonal(self):
+        """Сезонный анализ в отдельном потоке"""
+        data = self.get_filtered_data()
+        if data is None:
+            messagebox.showwarning("Предупреждение", "Сначала загрузите данные")
+            return
+
+        def seasonal_analysis():
+            self.update_progress(25, "Анализ сезонных паттернов...")
+            result = ac.analyze_seasonal_patterns(data, self.pollutant_var.get(), period='daily')
+            self.update_progress(75, "Обработка результатов...")
+            return result
+
+        self.analyze_in_thread(seasonal_analysis, "сезонный анализ")
+        self.pending_update = self.display_seasonal_results
+
+    def display_trends_results(self, trends):
+        """Отображение результатов анализа трендов"""
+        if not trends or 'error' in trends:
+            result_text = "❌ Не удалось выполнить анализ трендов\n"
+            if trends and 'error' in trends:
+                result_text += f"Ошибка: {trends['error']}\n"
+        else:
+            region_info = f" ({self.region_var.get()})" if self.region_var.get() != "Все регионы" else ""
+            result_text = f"📈 АНАЛИЗ ТРЕНДОВ: {self.pollutant_var.get().upper()}{region_info}\n"
+            result_text += f"Метод: {self.trend_method_var.get()}\n"
+            result_text += f"Период анализа: {trends.get('period_days', 'N/A')} дней\n"
+            result_text += f"Точек данных: {trends.get('data_points', 'N/A')}\n\n"
+
+            if 'overall_direction' in trends:
+                result_text += f"Общее направление: {trends['overall_direction']}\n"
+                result_text += f"Изменение: {trends.get('change_percentage', 0):.2f}%\n"
+
+            if 'linear_trend' in trends:
+                lin_trend = trends['linear_trend']
+                result_text += f"\nЛинейный тренд:\n"
+                result_text += f"  Наклон: {lin_trend.get('slope', 0):.6f}\n"
+                result_text += f"  R²: {lin_trend.get('r_squared', 0):.3f}\n"
+
+            self.analysis_results['trends'] = trends
+
+        self.analysis_text.delete(1.0, tk.END)
+        self.analysis_text.insert(1.0, result_text)
+
+    def display_forecast_results(self, forecast):
+        """Отображение результатов прогнозирования"""
+        if not forecast or 'error' in forecast:
+            result_text = "❌ Не удалось выполнить прогнозирование\n"
+            if forecast and 'error' in forecast:
+                result_text += f"Ошибка: {forecast['error']}\n"
+        else:
+            region_info = f" ({self.region_var.get()})" if self.region_var.get() != "Все регионы" else ""
+            result_text = f"🔮 ПРОГНОЗ: {self.pollutant_var.get().upper()}{region_info}\n"
+            result_text += f"Горизонт: {forecast.get('forecast_horizon', 'N/A')} часов\n"
+            result_text += f"Метод: {forecast.get('method_used', 'N/A')}\n\n"
+
+            if 'forecast_stats' in forecast:
+                stats = forecast['forecast_stats']
+                result_text += "Статистика прогноза:\n"
+                result_text += f"  Среднее: {stats.get('mean', 0):.2f}\n"
+                result_text += f"  Мин: {stats.get('min', 0):.2f}\n"
+                result_text += f"  Макс: {stats.get('max', 0):.2f}\n"
+                result_text += f"  Станд. откл.: {stats.get('std', 0):.2f}\n"
+
+            # Детальный прогноз по часам
+            if 'final_forecast' in forecast and 'forecast_dates' in forecast:
+                result_text += f"\nДетальный прогноз (первые 12 часов):\n"
+                forecasts = forecast['final_forecast'][:12]
+                dates = forecast['forecast_dates'][:12]
+
+                for i, (date, value) in enumerate(zip(dates, forecasts)):
+                    time_str = pd.to_datetime(date).strftime('%m-%d %H:%M')
+                    result_text += f"  {time_str}: {value:.2f}\n"
+
+            self.analysis_results['forecast'] = forecast
+
+        current_text = self.analysis_text.get(1.0, tk.END)
+        self.analysis_text.delete(1.0, tk.END)
+        self.analysis_text.insert(1.0, current_text + "\n\n" + result_text)
+
+    def display_aqi_results(self, aqi_results):
+        """Отображение результатов AQI"""
+        if not aqi_results:
+            result_text = "❌ Не удалось рассчитать AQI\n"
+            result_text += "Проверьте наличие данных по SO2, NO2, PM2.5, PM10.\n"
+        else:
+            region_info = f" ({self.region_var.get()})" if self.region_var.get() != "Все регионы" else ""
+            result_text = f"🌍 ИНДЕКС КАЧЕСТВА ВОЗДУХА (AQI){region_info}\n\n"
+
+            if 'overall' in aqi_results:
+                overall = aqi_results['overall']
+                result_text += f"ОБЩИЙ AQI: {overall['aqi']} - {overall['category']}\n"
+                result_text += f"Основной загрязнитель: {overall['dominant_pollutant']}\n\n"
+
+            # Показываем все доступные загрязнители
+            for poll, poll_data in aqi_results.items():
+                if poll != 'overall':
+                    result_text += f"{poll}:\n"
+                    result_text += f"  Концентрация: {poll_data.get('concentration', 0):.2f} {poll_data.get('unit', '')}\n"
+                    result_text += f"  AQI: {poll_data.get('aqi', 0)}\n"
+                    result_text += f"  Категория: {poll_data.get('category', 'N/A')}\n"
+                    result_text += f"  Рекомендации: {poll_data.get('health_advice', 'N/A')}\n\n"
+
+            self.analysis_results['aqi'] = aqi_results
+
+        current_text = self.analysis_text.get(1.0, tk.END)
+        self.analysis_text.delete(1.0, tk.END)
+        self.analysis_text.insert(1.0, current_text + "\n\n" + result_text)
+
+    def display_seasonal_results(self, seasonal):
+        """Отображение результатов сезонного анализа"""
+        if not seasonal or 'error' in seasonal:
+            result_text = "❌ Не удалось выполнить сезонный анализ\n"
+            if seasonal and 'error' in seasonal:
+                result_text += f"Ошибка: {seasonal['error']}\n"
+        else:
+            region_info = f" ({self.region_var.get()})" if self.region_var.get() != "Все регионы" else ""
+            result_text = f"📅 СЕЗОННЫЙ АНАЛИЗ: {self.pollutant_var.get().upper()}{region_info}\n\n"
+
+            if 'basic_stats' in seasonal:
+                stats = seasonal['basic_stats']
+                result_text += f"Общая статистика:\n"
+                result_text += f"  Среднее: {stats.get('mean', 0):.2f}\n"
+                result_text += f"  Стандартное отклонение: {stats.get('std', 0):.2f}\n"
+                result_text += f"  Минимум: {stats.get('min', 0):.2f}\n"
+                result_text += f"  Максимум: {stats.get('max', 0):.2f}\n"
+                result_text += f"  Записей: {stats.get('total_records', 0)}\n\n"
+
+            if 'hourly_patterns' in seasonal:
+                result_text += "Суточные паттерны (первые 6 часов):\n"
+                patterns = seasonal['hourly_patterns']
+                for pattern in patterns[:6]:
+                    result_text += f"  {int(pattern['hour'])}:00 - {pattern['mean']:.2f} (σ={pattern.get('std', 0):.2f})\n"
+
+            if 'peak_hour' in seasonal:
+                peak = seasonal['peak_hour']
+                result_text += f"\n🏆 Пиковый час: {peak['hour']}:00\n"
+                result_text += f"Концентрация: {peak['concentration']:.2f}\n"
+
+            self.analysis_results['seasonal'] = seasonal
+
+        current_text = self.analysis_text.get(1.0, tk.END)
+        self.analysis_text.delete(1.0, tk.END)
+        self.analysis_text.insert(1.0, current_text + "\n\n" + result_text)
+
     def load_data(self):
         """Загрузка данных из CSV файла"""
         file_path = filedialog.askopenfilename(
@@ -325,7 +664,6 @@ class AirQualityAnalyzerGUI:
             self.regions = {"Все данные": "Все данные"}
             self.region_combo['values'] = ["Все регионы"]
             self.viz_region_combo['values'] = ["Все регионы"]
-
 
     def get_filtered_data(self, use_viz_filters=False):
         """Получить отфильтрованные данные"""
@@ -426,187 +764,6 @@ class AirQualityAnalyzerGUI:
             self.pollutant_var.set(available_pollutants[0])
             self.pollutant_combo['values'] = available_pollutants
             self.viz_pollutant_var.set(available_pollutants[0])
-
-    def analyze_trends(self):
-        """Анализ трендов"""
-        data = self.get_filtered_data()
-        if data is None:
-            messagebox.showwarning("Предупреждение", "Сначала загрузите данные")
-            return
-
-        pollutant = self.pollutant_var.get()
-        method = self.trend_method_var.get()
-
-        try:
-            # Подготовка данных для анализа
-            analysis_data = data.copy()
-            if 'date' in analysis_data.columns:
-                analysis_data = analysis_data.rename(columns={'date': 'timestamp'})
-
-            # Анализ трендов
-            trends = ac.calculate_pollution_trend(analysis_data, pollutant, method)
-
-            # Отображение результатов
-            region_info = f" ({self.region_var.get()})" if self.region_var.get() != "Все регионы" else ""
-            result_text = f"📈 АНАЛИЗ ТРЕНДОВ: {pollutant.upper()}{region_info}\n"
-            result_text += f"Метод: {method}\n"
-            result_text += f"Период анализа: {trends.get('period_days', 'N/A')} дней\n"
-            result_text += f"Точек данных: {trends.get('data_points', 'N/A')}\n\n"
-
-            if 'overall_direction' in trends:
-                result_text += f"Общее направление: {trends['overall_direction']}\n"
-                result_text += f"Изменение: {trends.get('change_percentage', 0):.2f}%\n"
-
-            if 'linear_trend' in trends:
-                lin_trend = trends['linear_trend']
-                result_text += f"\nЛинейный тренд:\n"
-                result_text += f"  Наклон: {lin_trend.get('slope', 0):.6f}\n"
-                result_text += f"  R²: {lin_trend.get('r_squared', 0):.3f}\n"
-
-            self.analysis_results['trends'] = trends
-            self.analysis_text.delete(1.0, tk.END)
-            self.analysis_text.insert(1.0, result_text)
-
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Ошибка анализа трендов: {str(e)}")
-
-    def analyze_forecast(self):
-        """Прогнозирование уровней загрязнения"""
-        data = self.get_filtered_data()
-        if data is None:
-            messagebox.showwarning("Предупреждение", "Сначала загрузите данные")
-            return
-
-        pollutant = self.pollutant_var.get()
-
-        try:
-            horizon = int(self.forecast_horizon_var.get())
-
-            # Подготовка данных
-            analysis_data = data.copy()
-            if 'date' in analysis_data.columns:
-                analysis_data = analysis_data.rename(columns={'date': 'timestamp'})
-
-            # Прогнозирование
-            forecast = ac.predict_future_levels(analysis_data, pollutant,
-                                                forecast_horizon=horizon, method='hybrid')
-
-            # Отображение результатов
-            region_info = f" ({self.region_var.get()})" if self.region_var.get() != "Все регионы" else ""
-            result_text = f"🔮 ПРОГНОЗ: {pollutant.upper()}{region_info}\n"
-            result_text += f"Горизонт: {forecast.get('forecast_horizon', 'N/A')} часов\n"
-            result_text += f"Метод: {forecast.get('method_used', 'N/A')}\n\n"
-
-            if 'forecast_stats' in forecast:
-                stats = forecast['forecast_stats']
-                result_text += "Статистика прогноза:\n"
-                result_text += f"  Среднее: {stats.get('mean', 0):.2f}\n"
-                result_text += f"  Мин: {stats.get('min', 0):.2f}\n"
-                result_text += f"  Макс: {stats.get('max', 0):.2f}\n"
-                result_text += f"  Станд. откл.: {stats.get('std', 0):.2f}\n"
-
-            self.analysis_results['forecast'] = forecast
-            current_text = self.analysis_text.get(1.0, tk.END)
-            self.analysis_text.delete(1.0, tk.END)
-            self.analysis_text.insert(1.0, current_text + "\n\n" + result_text)
-
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Ошибка прогнозирования: {str(e)}")
-
-    def calculate_aqi(self):
-        """Расчет индекса качества воздуха"""
-        data = self.get_filtered_data()
-        if data is None:
-            messagebox.showwarning("Предупреждение", "Сначала загрузите данные")
-            return
-
-        try:
-            # Расчет AQI
-            aqi_results = ac.compute_air_quality_index(data)
-
-            # Отображение результатов
-            region_info = f" ({self.region_var.get()})" if self.region_var.get() != "Все регионы" else ""
-            result_text = f"🌍 ИНДЕКС КАЧЕСТВА ВОЗДУХА (AQI){region_info}\n\n"
-
-            if 'overall' in aqi_results:
-                overall = aqi_results['overall']
-                result_text += f"ОБЩИЙ AQI: {overall['aqi']} - {overall['category']}\n"
-                result_text += f"Основной загрязнитель: {overall['dominant_pollutant']}\n\n"
-
-            # Показываем все доступные загрязнители
-            for poll, poll_data in aqi_results.items():
-                if poll != 'overall':
-                    result_text += f"{poll}:\n"
-                    result_text += f"  Концентрация: {poll_data.get('concentration', 0):.2f} {poll_data.get('unit', '')}\n"
-                    result_text += f"  AQI: {poll_data.get('aqi', 0)}\n"
-                    result_text += f"  Категория: {poll_data.get('category', 'N/A')}\n"
-                    result_text += f"  Рекомендации: {poll_data.get('health_advice', 'N/A')}\n\n"
-
-            # Если нет результатов AQI
-            if len(aqi_results) <= 1:  # Только overall или пусто
-                result_text += "⚠ Не удалось рассчитать AQI для доступных показателей.\n"
-                result_text += "Проверьте наличие данных по SO2, NO2, PM2.5, PM10.\n"
-
-            self.analysis_results['aqi'] = aqi_results
-            current_text = self.analysis_text.get(1.0, tk.END)
-            self.analysis_text.delete(1.0, tk.END)
-            self.analysis_text.insert(1.0, current_text + "\n\n" + result_text)
-
-        except Exception as e:
-            error_msg = f"Ошибка расчета AQI: {str(e)}"
-            print(error_msg)  # Для отладки
-            messagebox.showerror("Ошибка", error_msg)
-
-    def analyze_seasonal(self):
-        """Сезонный анализ"""
-        data = self.get_filtered_data()
-        if data is None:
-            messagebox.showwarning("Предупреждение", "Сначала загрузите данные")
-            return
-
-        pollutant = self.pollutant_var.get()
-
-        try:
-            # Сезонный анализ
-            seasonal = ac.analyze_seasonal_patterns(data, pollutant, period='daily')
-
-            # Отображение результатов
-            region_info = f" ({self.region_var.get()})" if self.region_var.get() != "Все регионы" else ""
-            result_text = f"📅 СЕЗОННЫЙ АНАЛИЗ: {pollutant.upper()}{region_info}\n\n"
-
-            if 'error' in seasonal:
-                result_text += f"❌ Ошибка: {seasonal['error']}\n"
-            else:
-                # Базовая статистика
-                if 'basic_stats' in seasonal:
-                    stats = seasonal['basic_stats']
-                    result_text += f"Общая статистика:\n"
-                    result_text += f"  Среднее: {stats.get('mean', 0):.2f}\n"
-                    result_text += f"  Стандартное отклонение: {stats.get('std', 0):.2f}\n"
-                    result_text += f"  Минимум: {stats.get('min', 0):.2f}\n"
-                    result_text += f"  Максимум: {stats.get('max', 0):.2f}\n"
-                    result_text += f"  Записей: {stats.get('total_records', 0)}\n\n"
-
-                if 'hourly_patterns' in seasonal:
-                    result_text += "Суточные паттерны (первые 6 часов):\n"
-                    patterns = seasonal['hourly_patterns']
-                    for pattern in patterns[:6]:
-                        result_text += f"  {int(pattern['hour'])}:00 - {pattern['mean']:.2f} (σ={pattern.get('std', 0):.2f})\n"
-
-                if 'peak_hour' in seasonal:
-                    peak = seasonal['peak_hour']
-                    result_text += f"\n🏆 Пиковый час: {peak['hour']}:00\n"
-                    result_text += f"Концентрация: {peak['concentration']:.2f}\n"
-
-            self.analysis_results['seasonal'] = seasonal
-            current_text = self.analysis_text.get(1.0, tk.END)
-            self.analysis_text.delete(1.0, tk.END)
-            self.analysis_text.insert(1.0, current_text + "\n\n" + result_text)
-
-        except Exception as e:
-            error_msg = f"Ошибка сезонного анализа: {str(e)}"
-            print(error_msg)  # Для отладки
-            messagebox.showerror("Ошибка", error_msg)
 
     def plot_timeseries(self):
         """Построение графика временного ряда"""
