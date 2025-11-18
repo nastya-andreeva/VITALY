@@ -254,8 +254,6 @@ class AirQualityAnalyzerGUI:
                    command=self.plot_timeseries).pack(side='left', padx=2)
         ttk.Button(buttons_row, text="Распределение",
                    command=self.plot_distribution).pack(side='left', padx=2)
-        ttk.Button(buttons_row, text="Сезонность",
-                   command=self.plot_seasonal).pack(side='left', padx=2)
         ttk.Button(buttons_row, text="Дашборд AQI",
                    command=self.plot_aqi).pack(side='left', padx=2)
         ttk.Button(buttons_row, text="Тепловая карта",
