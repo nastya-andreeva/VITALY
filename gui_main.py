@@ -617,37 +617,30 @@ class AirQualityAnalyzerGUI:
             messagebox.showwarning("Предупреждение", "Сначала загрузите данные")
             return
 
-        def analyze_forecast(self):
-            """Прогнозирование в отдельном потоке"""
-            data = self.get_filtered_data()
-            if data is None:
-                messagebox.showwarning("Предупреждение", "Сначала загрузите данные")
-                return
+        def forecast_analysis():
+            self.update_progress(20, "Подготовка данных...")
+            horizon = int(self.forecast_horizon_var.get())
+            # ИСПОЛЬЗУЕМ ФИКСИРОВАННЫЙ МЕТОД ПРОГНОЗИРОВАНИЯ
+            forecast_method = "hybrid"  # Фиксированный метод
+            analysis_data = data.copy()
 
-            def forecast_analysis():
-                self.update_progress(20, "Подготовка данных...")
-                horizon = int(self.forecast_horizon_var.get())
-                # ИСПОЛЬЗУЕМ ФИКСИРОВАННЫЙ МЕТОД ПРОГНОЗИРОВАНИЯ
-                forecast_method = "hybrid"  # Фиксированный метод
-                analysis_data = data.copy()
+            if 'date' in analysis_data.columns:
+                analysis_data = analysis_data.rename(columns={'date': 'timestamp'})
 
-                if 'date' in analysis_data.columns:
-                    analysis_data = analysis_data.rename(columns={'date': 'timestamp'})
+            self.update_progress(40, f"Построение прогноза ({forecast_method})...")
 
-                self.update_progress(40, f"Построение прогноза ({forecast_method})...")
+            # ✅ Используем фиксированный метод прогнозирования
+            result = ac.predict_future_levels(
+                analysis_data,
+                self.pollutant_var.get(),
+                forecast_horizon=horizon,
+                method=forecast_method  # ✅ Передаем фиксированный метод
+            )
+            self.update_progress(80, "Формирование результатов...")
+            return result
 
-                # ✅ Используем фиксированный метод прогнозирования
-                result = ac.predict_future_levels(
-                    analysis_data,
-                    self.pollutant_var.get(),
-                    forecast_horizon=horizon,
-                    method=forecast_method  # ✅ Передаем фиксированный метод
-                )
-                self.update_progress(80, "Формирование результатов...")
-                return result
-
-            self.analyze_in_thread(forecast_analysis, "прогнозирование")
-            self.pending_update = self.display_forecast_results
+        self.analyze_in_thread(forecast_analysis, "прогнозирование")
+        self.pending_update = self.display_forecast_results
 
     def calculate_aqi(self):
         """Расчет AQI в отдельном потоке"""
@@ -1149,10 +1142,14 @@ class AirQualityAnalyzerGUI:
 
                     region_info = f" ({self.viz_region_var.get()})" if self.viz_region_var.get() != "Все регионы" else ""
                     time_info = ""
-                    if self.start_date_var.get() or self.end_date_var.get():
-                        start = self.start_date_var.get() or "начало"
-                        end = self.end_date_var.get() or "конец"
-                        time_info = f" [{start} - {end}]"
+
+                    # ИСПРАВЛЕНИЕ: используем календари вместо переменных
+                    start_date = self.start_date_entry.get_date()
+                    end_date = self.end_date_entry.get_date()
+                    if start_date or end_date:
+                        start_str = start_date.strftime('%Y-%m-%d') if start_date else "начало"
+                        end_str = end_date.strftime('%Y-%m-%d') if end_date else "конец"
+                        time_info = f" [{start_str} - {end_str}]"
 
                     ax.set_title(f'Временной ряд: {pollutant}{region_info}{time_info}')
                     ax.set_xlabel('Дата')
@@ -1182,10 +1179,14 @@ class AirQualityAnalyzerGUI:
 
         region = self.viz_region_var.get()
         period_text = ""
-        if self.start_date_var.get() or self.end_date_var.get():
-            start = self.start_date_var.get() or "начало"
-            end = self.end_date_var.get() or "конец"
-            period_text = f"[{start} - {end}]"
+
+        # ИСПРАВЛЕНИЕ: используем календари вместо переменных
+        start_date = self.start_date_entry.get_date()
+        end_date = self.end_date_entry.get_date()
+        if start_date or end_date:
+            start_str = start_date.strftime('%Y-%m-%d') if start_date else "начало"
+            end_str = end_date.strftime('%Y-%m-%d') if end_date else "конец"
+            period_text = f"[{start_str} - {end_str}]"
 
         # Все доступные загрязнители
         pollutants = ['so2', 'no2', 'rspm', 'spm', 'pm2_5']
