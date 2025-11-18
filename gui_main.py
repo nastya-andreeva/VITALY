@@ -1601,15 +1601,8 @@ class AirQualityAnalyzerGUI:
             self.update_data_treeview(self.data)
             messagebox.showinfo("Успех", "Фильтры сброшены. Отображаются все данные")
 
-
 def main():
     """Запуск GUI приложения"""
-    # Добавьте эту строку для лучшей совместимости с macOS
-    if sys.platform == "darwin":
-        import tkinter.ttk as ttk
-        # Улучшает отображение виджетов на macOS
-        ttk.Style().theme_use('clam')  # или 'aqua'
-
     root = tk.Tk()
     app = AirQualityAnalyzerGUI(root)
     root.mainloop()
