@@ -252,12 +252,16 @@ class AirQualityAnalyzerGUI:
 
         ttk.Button(buttons_row, text="Временной ряд",
                    command=self.plot_timeseries).pack(side='left', padx=2)
-        ttk.Button(buttons_row, text="Распределение",
-                   command=self.plot_distribution).pack(side='left', padx=2)
+        ttk.Button(buttons_row, text="Сравнение загрязнителей",
+                   command=self.plot_comparison).pack(side='left', padx=2)
+        ttk.Button(buttons_row, text="Региональное сравнение",
+                   command=self.plot_regional).pack(side='left', padx=2)
+        ttk.Button(buttons_row, text="Сезонные паттерны",
+                   command=self.plot_seasonal).pack(side='left', padx=2)
+        ttk.Button(buttons_row, text="Годовая динамика",
+                   command=self.plot_yearly).pack(side='left', padx=2)
         ttk.Button(buttons_row, text="Дашборд AQI",
                    command=self.plot_aqi).pack(side='left', padx=2)
-        ttk.Button(buttons_row, text="Тепловая карта",
-                   command=self.plot_heatmap).pack(side='left', padx=2)
         ttk.Button(buttons_row, text="Очистить графики",
                    command=self.clear_plots).pack(side='left', padx=2)
 
@@ -764,47 +768,64 @@ class AirQualityAnalyzerGUI:
             self.viz_pollutant_var.set(available_pollutants[0])
 
     def plot_timeseries(self):
-        """Построение графика временного ряда"""
+        """Построение упрощенного графика временного ряда"""
         data = self.get_filtered_data(use_viz_filters=True)
         if data is None:
             messagebox.showwarning("Предупреждение", "Сначала загрузите данные")
             return
 
         pollutant = self.viz_pollutant_var.get()
+        region = self.viz_region_var.get()
+
+        # Формируем текст периода
+        period_text = ""
+        if self.start_date_var.get() or self.end_date_var.get():
+            start = self.start_date_var.get() or "начало"
+            end = self.end_date_var.get() or "конец"
+            period_text = f"[{start} - {end}]"
 
         try:
-            # Создание графика
-            fig, ax = plt.subplots(figsize=(12, 6))
-
-            if 'date' in data.columns:
-                valid_data = data[['date', pollutant]].dropna()
-                ax.plot(valid_data['date'], valid_data[pollutant],
-                        alpha=0.7, linewidth=1, label=pollutant, color='steelblue')
-
-                region_info = f" ({self.viz_region_var.get()})" if self.viz_region_var.get() != "Все регионы" else ""
-                time_info = ""
-                if self.start_date_var.get() or self.end_date_var.get():
-                    start = self.start_date_var.get() or "начало"
-                    end = self.end_date_var.get() or "конец"
-                    time_info = f" [{start} - {end}]"
-
-                ax.set_title(f'Временной ряд: {pollutant}{region_info}{time_info}')
-                ax.set_xlabel('Дата')
-                ax.set_ylabel('Концентрация')
-                ax.legend()
-                ax.grid(True, alpha=0.3)
-
-                # Форматирование дат
-                fig.autofmt_xdate()
-
-            # Отображение в GUI
-            self.display_plot(fig)
-
+            fig = ve.create_simple_timeseries_plot(data, pollutant, region, period_text)
+            if fig:
+                self.display_plot(fig)
+            else:
+                messagebox.showwarning("Предупреждение", "Не удалось построить график. Проверьте данные.")
         except Exception as e:
             messagebox.showerror("Ошибка", f"Ошибка построения графика: {str(e)}")
 
-    def plot_distribution(self):
-        """Построение гистограммы распределения"""
+    def plot_comparison(self):
+        """Построение графика сравнения загрязнителей"""
+        data = self.get_filtered_data(use_viz_filters=True)
+        if data is None:
+            messagebox.showwarning("Предупреждение", "Сначала загрузите данные")
+            return
+
+        region = self.viz_region_var.get()
+        period_text = ""
+        if self.start_date_var.get() or self.end_date_var.get():
+            start = self.start_date_var.get() or "начало"
+            end = self.end_date_var.get() or "конец"
+            period_text = f"[{start} - {end}]"
+
+        # Все доступные загрязнители
+        pollutants = ['so2', 'no2', 'rspm', 'spm', 'pm2_5']
+        available_pollutants = [p for p in pollutants if p in data.columns]
+
+        if len(available_pollutants) < 2:
+            messagebox.showwarning("Предупреждение", "Нужно хотя бы 2 загрязнителя для сравнения")
+            return
+
+        try:
+            fig = ve.create_pollutant_comparison_plot(data, available_pollutants, region, period_text)
+            if fig:
+                self.display_plot(fig)
+            else:
+                messagebox.showwarning("Предупреждение", "Не удалось построить график сравнения")
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Ошибка построения графика: {str(e)}")
+
+    def plot_regional(self):
+        """Построение графика регионального сравнения"""
         data = self.get_filtered_data(use_viz_filters=True)
         if data is None:
             messagebox.showwarning("Предупреждение", "Сначала загрузите данные")
@@ -812,51 +833,64 @@ class AirQualityAnalyzerGUI:
 
         pollutant = self.viz_pollutant_var.get()
 
-        try:
-            fig, ax = plt.subplots(figsize=(10, 6))
+        # Находим колонку с регионами
+        region_col = None
+        region_columns = ['state', 'city', 'location', 'region', 'area']
+        for col in region_columns:
+            if col in data.columns:
+                region_col = col
+                break
 
-            valid_data = data[pollutant].dropna()
-            ax.hist(valid_data, bins=50, alpha=0.7, edgecolor='black', color='lightblue')
-
-            region_info = f" ({self.viz_region_var.get()})" if self.viz_region_var.get() != "Все регионы" else ""
-            time_info = ""
-            if self.start_date_var.get() or self.end_date_var.get():
-                start = self.start_date_var.get() or "начало"
-                end = self.end_date_var.get() or "конец"
-                time_info = f" [{start} - {end}]"
-
-            ax.set_title(f'Распределение: {pollutant}{region_info}{time_info}')
-            ax.set_xlabel('Концентрация')
-            ax.set_ylabel('Частота')
-            ax.grid(True, alpha=0.3)
-
-            # Добавление статистики
-            mean = valid_data.mean()
-            median = valid_data.median()
-            ax.axvline(mean, color='red', linestyle='--', label=f'Среднее: {mean:.2f}')
-            ax.axvline(median, color='green', linestyle='--', label=f'Медиана: {median:.2f}')
-            ax.legend()
-
-            self.display_plot(fig)
-
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Ошибка построения гистограммы: {str(e)}")
-
-    def plot_seasonal(self):
-        """Построение графика сезонности"""
-        if 'seasonal' not in self.analysis_results:
-            messagebox.showwarning("Предупреждение", "Сначала выполните сезонный анализ")
+        if not region_col:
+            messagebox.showwarning("Предупреждение", "Не найдена колонка с регионами")
             return
 
         try:
-            seasonal_data = self.analysis_results['seasonal']
-            fig = ve.create_seasonal_analysis_plot(seasonal_data)
-
+            fig = ve.create_regional_comparison_plot(data, pollutant, region_col, top_n=10)
             if fig:
                 self.display_plot(fig)
-
+            else:
+                messagebox.showwarning("Предупреждение", "Не удалось построить график регионов")
         except Exception as e:
-            messagebox.showerror("Ошибка", f"Ошибка построения графика сезонности: {str(e)}")
+            messagebox.showerror("Ошибка", f"Ошибка построения графика: {str(e)}")
+
+    def plot_seasonal(self):
+        """Построение графика сезонных паттернов"""
+        data = self.get_filtered_data(use_viz_filters=True)
+        if data is None:
+            messagebox.showwarning("Предупреждение", "Сначала загрузите данные")
+            return
+
+        pollutant = self.viz_pollutant_var.get()
+        region = self.viz_region_var.get()
+
+        try:
+            fig = ve.create_monthly_trend_plot(data, pollutant, region)
+            if fig:
+                self.display_plot(fig)
+            else:
+                messagebox.showwarning("Предупреждение", "Не удалось построить график сезонности")
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Ошибка построения графика: {str(e)}")
+
+    def plot_yearly(self):
+        """Построение графика годовой динамики"""
+        data = self.get_filtered_data(use_viz_filters=True)
+        if data is None:
+            messagebox.showwarning("Предупреждение", "Сначала загрузите данные")
+            return
+
+        pollutant = self.viz_pollutant_var.get()
+        region = self.viz_region_var.get()
+
+        try:
+            fig = ve.create_yearly_summary_plot(data, pollutant, region)
+            if fig:
+                self.display_plot(fig)
+            else:
+                messagebox.showwarning("Предупреждение", "Не удалось построить график годовой динамики")
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Ошибка построения графика: {str(e)}")
 
     def plot_aqi(self):
         """Построение дашборда AQI"""
@@ -870,58 +904,11 @@ class AirQualityAnalyzerGUI:
 
             if fig:
                 self.display_plot(fig)
+            else:
+                messagebox.showwarning("Предупреждение", "Не удалось построить дашборд AQI")
 
         except Exception as e:
             messagebox.showerror("Ошибка", f"Ошибка построения дашборда AQI: {str(e)}")
-
-    def plot_heatmap(self):
-        """Построение тепловой карты корреляций"""
-        data = self.get_filtered_data(use_viz_filters=True)
-        if data is None:
-            messagebox.showwarning("Предупреждение", "Сначала загрузите данные")
-            return
-
-        try:
-            # Выбор числовых колонок для корреляции
-            numeric_cols = ['so2', 'no2', 'rspm', 'spm', 'pm2_5']
-            available_cols = [col for col in numeric_cols if col in data.columns]
-
-            if len(available_cols) < 2:
-                messagebox.showwarning("Предупреждение", "Недостаточно данных для тепловой карты")
-                return
-
-            corr_data = data[available_cols].corr()
-
-            fig, ax = plt.subplots(figsize=(8, 6))
-            im = ax.imshow(corr_data, cmap='coolwarm', aspect='auto', vmin=-1, vmax=1)
-
-            # Добавление значений в ячейки
-            for i in range(len(available_cols)):
-                for j in range(len(available_cols)):
-                    text = ax.text(j, i, f'{corr_data.iloc[i, j]:.2f}',
-                                   ha="center", va="center", color="black", fontweight='bold')
-
-            ax.set_xticks(range(len(available_cols)))
-            ax.set_yticks(range(len(available_cols)))
-            ax.set_xticklabels(available_cols)
-            ax.set_yticklabels(available_cols)
-
-            region_info = f" ({self.viz_region_var.get()})" if self.viz_region_var.get() != "Все регионы" else ""
-            time_info = ""
-            if self.start_date_var.get() or self.end_date_var.get():
-                start = self.start_date_var.get() or "начало"
-                end = self.end_date_var.get() or "конец"
-                time_info = f" [{start} - {end}]"
-
-            ax.set_title(f'Корреляция показателей{region_info}{time_info}')
-
-            # Добавление цветовой шкалы
-            plt.colorbar(im, ax=ax)
-
-            self.display_plot(fig)
-
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Ошибка построения тепловой карты: {str(e)}")
 
     def display_plot(self, fig):
         """Отображение графика в GUI"""
