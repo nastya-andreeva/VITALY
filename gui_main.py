@@ -201,12 +201,19 @@ class AirQualityAnalyzerGUI:
                                    values=["linear", "moving_avg", "decomposition", "composite"])
         trend_combo.pack(side='left', padx=5)
 
+        # ✅ ДОБАВЛЯЕМ ВЫБОР МЕТОДА ПРОГНОЗИРОВАНИЯ (НОВОЕ)
+        ttk.Label(row2, text="Метод прогноза:").pack(side='left', padx=5)
+        self.forecast_method_var = tk.StringVar(value="hybrid")
+        forecast_combo = ttk.Combobox(row2, textvariable=self.forecast_method_var,
+                                      values=["arima", "ensemble", "hybrid"])
+        forecast_combo.pack(side='left', padx=5)
+
         ttk.Label(row2, text="Горизонт прогноза (ч):").pack(side='left', padx=5)
         self.forecast_horizon_var = tk.StringVar(value="24")
         ttk.Spinbox(row2, from_=1, to=168, textvariable=self.forecast_horizon_var,
                     width=5).pack(side='left', padx=5)
 
-        # Прогресс-бар
+        # ✅ СОХРАНЯЕМ ПРОГРЕСС-БАР (СУЩЕСТВУЮЩИЙ КОД)
         progress_frame = ttk.Frame(params_frame)
         progress_frame.pack(fill='x', pady=5)
 
@@ -217,7 +224,7 @@ class AirQualityAnalyzerGUI:
                                             maximum=100, mode='determinate')
         self.progress_bar.pack(fill='x', pady=2)
 
-        # Кнопки анализа
+        # ✅ СОХРАНЯЕМ КНОПКИ АНАЛИЗА (СУЩЕСТВУЮЩИЙ КОД)
         button_frame = ttk.Frame(params_frame)
         button_frame.pack(fill='x', pady=10)
 
@@ -241,7 +248,7 @@ class AirQualityAnalyzerGUI:
                                               command=self.cancel_analysis, state='disabled')
         self.cancel_analysis_btn.pack(side='left', padx=5)
 
-        # Фрейм результатов анализа
+        # ✅ СОХРАНЯЕМ ФРЕЙМ РЕЗУЛЬТАТОВ АНАЛИЗА (СУЩЕСТВУЮЩИЙ КОД)
         results_frame = ttk.LabelFrame(self.analysis_tab, text="Результаты анализа", padding=10)
         results_frame.pack(fill='both', expand=True, padx=5, pady=5)
 
@@ -600,17 +607,20 @@ class AirQualityAnalyzerGUI:
         def forecast_analysis():
             self.update_progress(20, "Подготовка данных...")
             horizon = int(self.forecast_horizon_var.get())
+            forecast_method = self.forecast_method_var.get()  # ✅ Получаем выбранный метод
             analysis_data = data.copy()
 
             if 'date' in analysis_data.columns:
                 analysis_data = analysis_data.rename(columns={'date': 'timestamp'})
 
-            self.update_progress(40, "Построение прогноза...")
+            self.update_progress(40, f"Построение прогноза ({forecast_method})...")
+
+            # ✅ Используем выбранный метод прогнозирования
             result = ac.predict_future_levels(
                 analysis_data,
                 self.pollutant_var.get(),
                 forecast_horizon=horizon,
-                method='hybrid'
+                method=forecast_method  # ✅ Передаем выбранный метод
             )
             self.update_progress(80, "Формирование результатов...")
             return result
