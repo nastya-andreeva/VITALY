@@ -21,7 +21,7 @@ import visualization_engine as ve
 
 
 class AnalysisThread(threading.Thread):
-    """Поток для выполнения анализа без блокировки GUI"""
+    """Поток для выполнения анализа"""
 
     def __init__(self, target, args=(), kwargs={}, callback=None):
         super().__init__()
@@ -44,6 +44,7 @@ class AnalysisThread(threading.Thread):
 
 class AirQualityAnalyzerGUI:
     def __init__(self, root):
+        self.forecast_horizon_var = 24
         self.root = root
         self.root.title("Система анализа качества воздуха")
         self.root.geometry("1200x800")
@@ -224,7 +225,7 @@ class AirQualityAnalyzerGUI:
         ttk.Label(row2, text="Горизонт прогноза (ч):").pack(side='left', padx=5)
         self.forecast_horizon_var = tk.StringVar(value="24")
         forecast_spinbox = ttk.Spinbox(row2, from_=1, to=168, textvariable=self.forecast_horizon_var,
-                                       width=5, state="readonly")
+                                       width=5)
         forecast_spinbox.pack(side='left', padx=5)
 
         # ✅ СОХРАНЯЕМ ПРОГРЕСС-БАР (СУЩЕСТВУЮЩИЙ КОД)
@@ -522,19 +523,47 @@ class AirQualityAnalyzerGUI:
     def set_analysis_buttons_state(self, enabled):
         """Включение/выключение кнопок анализа"""
         state = 'normal' if enabled else 'disabled'
+
+        # Основные кнопки анализа
         self.analyze_trends_btn.config(state=state)
         self.analyze_forecast_btn.config(state=state)
         self.calculate_aqi_btn.config(state=state)
         self.analyze_seasonal_btn.config(state=state)
+
+        # Управление состоянием Spinbox прогноза
+        if hasattr(self, 'forecast_spinbox'):
+            self.forecast_spinbox.config(state=state)
+
+        # Кнопка "Отменить" должна быть активна ТОЛЬКО когда анализ выполняется
         self.cancel_analysis_btn.config(state='normal' if not enabled else 'disabled')
+
+        # Устанавливаем флаг анализа
         self.is_analyzing = not enabled
+
+        # Если анализ отключен, сбрасываем прогресс
+        if enabled:
+            self.progress_var.set(0)
+            self.progress_label_var.set("Готов")
 
     def cancel_analysis(self):
         """Отмена текущего анализа"""
         if self.analysis_thread and self.analysis_thread.is_alive():
-            # В Python нет прямого способа остановить поток, но мы можем пометить его для отмены
-            self.update_progress(0, "Анализ отменен...")
+            # Сразу разблокируем все кнопки
             self.set_analysis_buttons_state(True)
+
+            # Показываем сообщение об отмене
+            self.analysis_text.insert(tk.END, "\n\n❌ Анализ отменен пользователем\n")
+            self.analysis_text.see(tk.END)
+
+            # Сбрасываем прогресс
+            self.progress_var.set(0)
+            self.progress_label_var.set("Готов")
+
+            # Останавливаем мониторинг прогресса
+            self.is_analyzing = False
+
+            # Даем потоку немного времени на завершение
+            self.analysis_thread.join(timeout=1.0)
 
     def analyze_in_thread(self, analysis_func, func_name, *args, **kwargs):
         """Запуск анализа в отдельном потоке"""
@@ -544,6 +573,9 @@ class AirQualityAnalyzerGUI:
 
         self.set_analysis_buttons_state(False)
         self.update_progress(10, f"Запуск {func_name}...")
+
+        # Сбрасываем флаг отмены
+        self.is_analyzing = True
 
         # Запуск в отдельном потоке
         self.analysis_thread = AnalysisThread(
@@ -558,30 +590,38 @@ class AirQualityAnalyzerGUI:
         self.monitor_analysis_progress(func_name)
 
     def monitor_analysis_progress(self, func_name):
-        """Мониторинг прогресса анализа"""
+        """Мониторинг прогресса с проверкой отмены"""
+        # Проверяем, что анализ все еще выполняется
+        if not self.is_analyzing:
+            return
+
         if self.analysis_thread and self.analysis_thread.is_alive():
-            # Имитация прогресса для длительных операций
             current_progress = self.progress_var.get()
-            if current_progress < 80:
-                new_progress = current_progress + 5
+            if current_progress < 90:
+                new_progress = current_progress + 2
                 self.update_progress(new_progress, f"Выполняется {func_name}...")
-                self.root.after(1000, lambda: self.monitor_analysis_progress(func_name))
-            else:
                 self.root.after(500, lambda: self.monitor_analysis_progress(func_name))
+            else:
+                self.root.after(300, lambda: self.monitor_analysis_progress(func_name))
 
     def on_analysis_complete(self, thread):
         """Обработчик завершения анализа"""
+        # Всегда разблокируем кнопки при завершении (нормальном или ошибке)
         self.set_analysis_buttons_state(True)
+        self.is_analyzing = False
 
         if thread.exception:
             self.update_progress(0, "Ошибка")
-            messagebox.showerror("Ошибка", f"Ошибка при анализе: {thread.exception}")
+            # Проверяем, что это не ошибка отмены
+            if "отменен" not in str(thread.exception).lower():
+                messagebox.showerror("Ошибка", f"Ошибка при анализе: {thread.exception}")
         else:
             self.update_progress(100, "Завершено")
+            # Через 1 секунду сбрасываем прогресс
             self.root.after(1000, lambda: self.update_progress(0, "Готов"))
 
             # Обновляем UI с результатами
-            if hasattr(self, 'pending_update') and self.pending_update:
+            if hasattr(self, 'pending_update') and self.pending_update and thread.result:
                 self.pending_update(thread.result)
 
     def analyze_trends(self):
@@ -610,36 +650,67 @@ class AirQualityAnalyzerGUI:
         # Сохраняем функцию для обновления UI
         self.pending_update = self.display_trends_results
 
+    def cancel_analysis(self):
+        """Отмена текущего анализа"""
+        if self.analysis_thread and self.analysis_thread.is_alive():
+            self.update_progress(0, "Отмена...")
+            self.set_analysis_buttons_state(True)
+
+            # Показываем сообщение об отмене
+            self.analysis_text.insert(tk.END, "\n\n❌ Анализ отменен пользователем\n")
+            self.analysis_text.see(tk.END)
+
+            # Сбрасываем прогресс, но НЕ запускаем автоматическое обновление
+            self.progress_var.set(0)
+            self.progress_label_var.set("Готов")
+
+            # Останавливаем мониторинг прогресса
+            self.is_analyzing = False
+
     def analyze_forecast(self):
         """Прогнозирование в отдельном потоке"""
+        # Проверка корректности горизонта прогноза
+        try:
+            horizon = int(self.forecast_horizon_var.get())
+            if horizon <= 0 or horizon > 168:
+                messagebox.showwarning("Предупреждение", "Горизонт прогноза должен быть от 1 до 168 часов")
+                return
+        except ValueError:
+            messagebox.showwarning("Предупреждение", "Некорректное значение горизонта прогноза")
+            return
+
         data = self.get_filtered_data()
         if data is None:
             messagebox.showwarning("Предупреждение", "Сначала загрузите данные")
             return
 
         def forecast_analysis():
-            self.update_progress(20, "Подготовка данных...")
-            horizon = int(self.forecast_horizon_var.get())
-            # ИСПОЛЬЗУЕМ ФИКСИРОВАННЫЙ МЕТОД ПРОГНОЗИРОВАНИЯ
-            forecast_method = "hybrid"  # Фиксированный метод
-            analysis_data = data.copy()
+            try:
+                self.update_progress(20, "Подготовка данных...")
 
-            if 'date' in analysis_data.columns:
-                analysis_data = analysis_data.rename(columns={'date': 'timestamp'})
+                horizon = int(self.forecast_horizon_var.get())
+                analysis_data = data.copy()
 
-            self.update_progress(40, f"Построение прогноза ({forecast_method})...")
+                if 'date' in analysis_data.columns:
+                    analysis_data = analysis_data.rename(columns={'date': 'timestamp'})
 
-            # ✅ Используем фиксированный метод прогнозирования
-            result = ac.predict_future_levels(
-                analysis_data,
-                self.pollutant_var.get(),
-                forecast_horizon=horizon,
-                method=forecast_method  # ✅ Передаем фиксированный метод
-            )
-            self.update_progress(80, "Формирование результатов...")
-            return result
+                self.update_progress(40, "Построение ARIMA прогноза...")
 
-        self.analyze_in_thread(forecast_analysis, "прогнозирование")
+                # Быстрый вызов ARIMA
+                result = ac.predict_future_levels(
+                    analysis_data,
+                    self.pollutant_var.get(),
+                    forecast_horizon=horizon,
+                    method='arima'
+                )
+
+                self.update_progress(80, "Формирование результатов...")
+                return result
+
+            except Exception as e:
+                return {'error': f'Ошибка при прогнозировании: {str(e)}'}
+
+        self.analyze_in_thread(forecast_analysis, "ARIMA прогнозирование")
         self.pending_update = self.display_forecast_results
 
     def calculate_aqi(self):

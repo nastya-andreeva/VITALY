@@ -98,9 +98,9 @@ def calculate_pollution_trend(data, pollutant, method='composite'):
     return trend_results
 
 
-def predict_future_levels(data, pollutant, forecast_horizon=24, method='hybrid'):
+def predict_future_levels(data, pollutant, forecast_horizon=24, method='arima'):
     """
-    Прогнозирование уровней загрязнения
+    Сверхбыстрое прогнозирование - только ARIMA(1,1,1)
     """
     if pollutant not in data.columns:
         return {'error': f'Загрязнитель {pollutant} не найден'}
@@ -114,29 +114,26 @@ def predict_future_levels(data, pollutant, forecast_horizon=24, method='hybrid')
     forecast_results = {
         'pollutant': pollutant,
         'forecast_horizon': forecast_horizon,
-        'last_historical_date': ts_data['timestamp'].max()
+        'last_historical_date': ts_data['timestamp'].max(),
+        'method_used': 'arima'
     }
 
     # Установка временного индекса
     ts_indexed = ts_data.set_index('timestamp')[pollutant]
 
-    predictions = {}
+    try:
+        # ВСЕГДА используем (1,1,1) для максимальной скорости
+        model = ARIMA(ts_indexed, order=(1, 1, 1))
+        arima_fit = model.fit()
+        arima_forecast = arima_fit.forecast(steps=forecast_horizon)
 
-    # Метод ARIMA
-    if method == 'arima':
-        try:
-            arima_model = ARIMA(ts_indexed, order=(1, 1, 1))
-            arima_fit = arima_model.fit()
-            arima_forecast = arima_fit.forecast(steps=forecast_horizon)
+        forecast_results['final_forecast'] = arima_forecast.tolist()
+        forecast_results['arima_params'] = (1, 1, 1)
+        forecast_results['arima_confidence'] = 0.8
 
-            predictions['arima'] = arima_forecast.values
-            forecast_results['arima_confidence'] = 0.8
-            forecast_results['final_forecast'] = arima_forecast.values.tolist()
-            forecast_results['method_used'] = 'arima'
-
-        except Exception as e:
-            forecast_results['arima_error'] = str(e)
-            forecast_results['error'] = f'Ошибка ARIMA: {str(e)}'
+    except Exception as e:
+        forecast_results['error'] = f"ARIMA ошибка: {str(e)}"
+        return forecast_results
 
     # Генерация дат прогноза
     forecast_dates = pd.date_range(
@@ -146,7 +143,6 @@ def predict_future_levels(data, pollutant, forecast_horizon=24, method='hybrid')
     )[1:]
 
     forecast_results['forecast_dates'] = forecast_dates.tolist()
-    forecast_results['all_predictions'] = {k: v.tolist() for k, v in predictions.items()}
 
     # Статистика прогноза
     if 'final_forecast' in forecast_results:
