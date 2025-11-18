@@ -394,6 +394,18 @@ def create_aqi_dashboard(aqi_results, save_path=None):
     health_advice = aqi_results['overall']['category']
     dominant_poll = aqi_results['overall']['dominant_pollutant']
     specific_advice = aqi_results[dominant_poll]['health_advice']
+    if len(specific_advice) > 100:
+        words = specific_advice.split()
+        lines = []
+        current_line = ""
+        for word in words:
+            if len(current_line + " " + word) <= 40:
+                current_line += " " + word
+            else:
+                lines.append(current_line.strip())
+                current_line = word
+        lines.append(current_line.strip())
+        specific_advice = "\n".join(lines)
 
     # Обрезаем длинный текст
     if len(specific_advice) > 120:

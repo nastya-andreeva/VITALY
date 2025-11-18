@@ -123,7 +123,7 @@ def predict_future_levels(data, pollutant, forecast_horizon=24, method='hybrid')
     predictions = {}
 
     # Метод ARIMA
-    if method in ['arima', 'hybrid']:
+    if method == 'arima':
         try:
             arima_model = ARIMA(ts_indexed, order=(1, 1, 1))
             arima_fit = arima_model.fit()
@@ -131,55 +131,12 @@ def predict_future_levels(data, pollutant, forecast_horizon=24, method='hybrid')
 
             predictions['arima'] = arima_forecast.values
             forecast_results['arima_confidence'] = 0.8
+            forecast_results['final_forecast'] = arima_forecast.values.tolist()
+            forecast_results['method_used'] = 'arima'
+
         except Exception as e:
             forecast_results['arima_error'] = str(e)
-
-    # Ансамблевый метод
-    if method in ['ensemble', 'hybrid']:
-        try:
-            features = pd.DataFrame(index=ts_indexed.index)
-            features['hour'] = features.index.hour
-            features['day_of_week'] = features.index.dayofweek
-            features['month'] = features.index.month
-            features['value_lag_1'] = ts_indexed.shift(1)
-            features['value_lag_24'] = ts_indexed.shift(24)
-            features['rolling_mean_7'] = ts_indexed.rolling(7).mean()
-
-            features = features.dropna()
-            target = ts_indexed.loc[features.index]
-
-            if len(features) > 100:
-                rf_model = RandomForestRegressor(n_estimators=50, random_state=42)
-                rf_model.fit(features, target)
-
-                # Простой прогноз - используем последние известные значения
-                last_features = features.iloc[-1:].copy()
-                future_predictions = []
-
-                for i in range(forecast_horizon):
-                    prediction = rf_model.predict(last_features)[0]
-                    future_predictions.append(prediction)
-                    # Обновляем фичи для следующего шага
-                    last_features['value_lag_1'] = prediction
-
-                predictions['ensemble'] = np.array(future_predictions)
-
-        except Exception as e:
-            forecast_results['ensemble_error'] = str(e)
-
-    # Гибридный подход
-    if method == 'hybrid' and len(predictions) >= 2:
-        hybrid_forecast = np.mean(list(predictions.values()), axis=0)
-        predictions['hybrid'] = hybrid_forecast
-        forecast_results['final_forecast'] = hybrid_forecast.tolist()
-        forecast_results['method_used'] = 'hybrid'
-    elif predictions:
-        best_method = list(predictions.keys())[0]
-        forecast_results['final_forecast'] = predictions[best_method].tolist()
-        forecast_results['method_used'] = best_method
-    else:
-        forecast_results['error'] = 'Не удалось построить прогноз'
-        return forecast_results
+            forecast_results['error'] = f'Ошибка ARIMA: {str(e)}'
 
     # Генерация дат прогноза
     forecast_dates = pd.date_range(

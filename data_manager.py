@@ -226,3 +226,61 @@ def prepare_analysis_dataset(data):
 
     print(f"✅ Подготовлен датасет: {len(analysis_data)} записей, {len(available_columns)} колонок")
     return analysis_data
+
+def detect_anomalies_iqr(data, pollutant_column):
+    """Обнаружение аномалий методом IQR"""
+    if pollutant_column not in data.columns:
+        return data, {'error': f'Колонка {pollutant_column} не найдена'}
+
+    working_data = data.copy()
+    working_data = working_data.dropna(subset=[pollutant_column])
+
+    if len(working_data) == 0:
+        return data, {'error': 'Нет данных для анализа'}
+
+    Q1 = working_data[pollutant_column].quantile(0.25)
+    Q3 = working_data[pollutant_column].quantile(0.75)
+    IQR = Q3 - Q1
+
+    lower_bound = Q1 - 1.5 * IQR
+    upper_bound = Q3 + 1.5 * IQR
+
+    anomalies_mask = (working_data[pollutant_column] < lower_bound) | (working_data[pollutant_column] > upper_bound)
+    clean_data = working_data[~anomalies_mask]
+    anomalies_data = working_data[anomalies_mask]
+
+    stats = {
+        'anomalies_detected': len(anomalies_data),
+        'anomaly_percentage': (len(anomalies_data) / len(working_data)) * 100,
+        'bounds': {'lower': lower_bound, 'upper': upper_bound}
+    }
+
+    return clean_data, stats
+
+def detect_anomalies_zscore(data, pollutant_column, threshold=3):
+    """Обнаружение аномалий методом Z-score"""
+    if pollutant_column not in data.columns:
+        return data, {'error': f'Колонка {pollutant_column} не найдена'}
+
+    working_data = data.copy()
+    working_data = working_data.dropna(subset=[pollutant_column])
+
+    if len(working_data) == 0:
+        return data, {'error': 'Нет данных для анализа'}
+
+    mean = working_data[pollutant_column].mean()
+    std = working_data[pollutant_column].std()
+
+    z_scores = (working_data[pollutant_column] - mean) / std
+    anomalies_mask = abs(z_scores) > threshold
+
+    clean_data = working_data[~anomalies_mask]
+    anomalies_data = working_data[anomalies_mask]
+
+    stats = {
+        'anomalies_detected': len(anomalies_data),
+        'anomaly_percentage': (len(anomalies_data) / len(working_data)) * 100,
+        'threshold_used': threshold
+    }
+
+    return clean_data, stats

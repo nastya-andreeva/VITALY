@@ -11,6 +11,7 @@ import matplotlib.dates as mdates
 import time
 from datetime import datetime, timedelta
 import numpy as np
+from tkcalendar import DateEntry
 
 # Добавляем пути к нашим модулям
 sys.path.append('.')
@@ -97,7 +98,7 @@ class AirQualityAnalyzerGUI:
         filter_frame = ttk.LabelFrame(self.data_tab, text="Фильтры данных", padding=10)
         filter_frame.pack(fill='x', padx=5, pady=5)
 
-        # Первая строка фильтров
+        # Первая строка фильтров - регион и показатель
         filter_row1 = ttk.Frame(filter_frame)
         filter_row1.pack(fill='x', pady=2)
 
@@ -112,23 +113,25 @@ class AirQualityAnalyzerGUI:
                                                  values=["Все показатели", "so2", "no2", "rspm", "spm", "pm2_5"])
         self.data_pollutant_combo.pack(side='left', padx=5)
 
-        # Вторая строка фильтров - даты
+        # Вторая строка фильтров - даты с календарями
         filter_row2 = ttk.Frame(filter_frame)
-        filter_row2.pack(fill='x', pady=2)
+        filter_row2.pack(fill='x', pady=5)
 
-        ttk.Label(filter_row2, text="Период:").pack(side='left', padx=5)
+        ttk.Label(filter_row2, text="Период данных:").pack(side='left', padx=5)
 
-        # Фрейм для полей ввода дат
+        # Календари для фильтрации дат
         date_frame = ttk.Frame(filter_row2)
         date_frame.pack(side='left', padx=5)
 
-        ttk.Label(date_frame, text="Нач. дата:").pack(side='left')
-        self.data_start_date_var = tk.StringVar()
-        ttk.Entry(date_frame, textvariable=self.data_start_date_var, width=12).pack(side='left', padx=2)
+        ttk.Label(date_frame, text="С:").pack(side='left')
+        self.data_start_date_entry = DateEntry(date_frame, width=12, background='darkblue',
+                                               foreground='white', borderwidth=2, date_pattern='y-mm-dd')
+        self.data_start_date_entry.pack(side='left', padx=2)
 
-        ttk.Label(date_frame, text="Кон. дата:").pack(side='left', padx=(10, 0))
-        self.data_end_date_var = tk.StringVar()
-        ttk.Entry(date_frame, textvariable=self.data_end_date_var, width=12).pack(side='left', padx=2)
+        ttk.Label(date_frame, text="По:").pack(side='left', padx=(10, 0))
+        self.data_end_date_entry = DateEntry(date_frame, width=12, background='darkblue',
+                                             foreground='white', borderwidth=2, date_pattern='y-mm-dd')
+        self.data_end_date_entry.pack(side='left', padx=2)
 
         # Кнопки управления фильтрами
         button_frame = ttk.Frame(filter_row2)
@@ -139,14 +142,30 @@ class AirQualityAnalyzerGUI:
         ttk.Button(button_frame, text="Сбросить фильтры",
                    command=self.reset_data_filters).pack(side='left', padx=2)
 
-        # Подсказка по формату дат
-        ttk.Label(filter_row2, text="Формат: ГГГГ-ММ-ДД", foreground="gray").pack(side='left', padx=5)
+        # Фрейм обработки выбросов
+        outlier_frame = ttk.LabelFrame(self.data_tab, text="Обработка выбросов", padding=10)
+        outlier_frame.pack(fill='x', padx=5, pady=5)
+
+        ttk.Label(outlier_frame, text="Метод обработки:").pack(side='left', padx=5)
+        self.outlier_method_var = tk.StringVar(value="MAD")
+        outlier_combo = ttk.Combobox(outlier_frame, textvariable=self.outlier_method_var,
+                                     values=["MAD", "IQR", "Z-score"], state="readonly")
+        outlier_combo.pack(side='left', padx=5)
+
+        ttk.Label(outlier_frame, text="Чувствительность:").pack(side='left', padx=5)
+        self.outlier_sensitivity_var = tk.StringVar(value="auto")
+        sensitivity_combo = ttk.Combobox(outlier_frame, textvariable=self.outlier_sensitivity_var,
+                                         values=["auto", "low", "medium", "high"], state="readonly")
+        sensitivity_combo.pack(side='left', padx=5)
+
+        ttk.Button(outlier_frame, text="Применить обработку",
+                   command=self.apply_outlier_processing).pack(side='left', padx=10)
 
         # Фрейм информации о данных
         info_frame = ttk.LabelFrame(self.data_tab, text="Информация о данных", padding=10)
         info_frame.pack(fill='x', padx=5, pady=5)
 
-        self.info_text = scrolledtext.ScrolledText(info_frame, height=6, width=100)
+        self.info_text = scrolledtext.ScrolledText(info_frame, height=6, width=100, state="disabled")
         self.info_text.pack(fill='both', expand=True)
 
         # Фрейм просмотра данных
@@ -183,12 +202,12 @@ class AirQualityAnalyzerGUI:
         ttk.Label(row1, text="Целевой показатель:").pack(side='left', padx=5)
         self.pollutant_var = tk.StringVar(value="so2")
         self.pollutant_combo = ttk.Combobox(row1, textvariable=self.pollutant_var,
-                                            values=["so2", "no2", "rspm", "spm", "pm2_5"])
+                                            values=["so2", "no2", "rspm", "spm", "pm2_5"], state="readonly")
         self.pollutant_combo.pack(side='left', padx=5)
 
         ttk.Label(row1, text="Регион:").pack(side='left', padx=5)
         self.region_var = tk.StringVar(value="Все регионы")
-        self.region_combo = ttk.Combobox(row1, textvariable=self.region_var)
+        self.region_combo = ttk.Combobox(row1, textvariable=self.region_var, state="readonly")
         self.region_combo.pack(side='left', padx=5)
 
         # Вторая строка параметров
@@ -198,20 +217,15 @@ class AirQualityAnalyzerGUI:
         ttk.Label(row2, text="Метод анализа:").pack(side='left', padx=5)
         self.trend_method_var = tk.StringVar(value="composite")
         trend_combo = ttk.Combobox(row2, textvariable=self.trend_method_var,
-                                   values=["linear", "moving_avg", "decomposition", "composite"])
+                                   values=["linear", "moving_avg", "decomposition", "composite"], state="readonly")
         trend_combo.pack(side='left', padx=5)
 
-        # ✅ ДОБАВЛЯЕМ ВЫБОР МЕТОДА ПРОГНОЗИРОВАНИЯ (НОВОЕ)
-        ttk.Label(row2, text="Метод прогноза:").pack(side='left', padx=5)
-        self.forecast_method_var = tk.StringVar(value="hybrid")
-        forecast_combo = ttk.Combobox(row2, textvariable=self.forecast_method_var,
-                                      values=["arima", "ensemble", "hybrid"])
-        forecast_combo.pack(side='left', padx=5)
-
+        # УБИРАЕМ ВЫБОР МЕТОДА ПРОГНОЗИРОВАНИЯ
         ttk.Label(row2, text="Горизонт прогноза (ч):").pack(side='left', padx=5)
         self.forecast_horizon_var = tk.StringVar(value="24")
-        ttk.Spinbox(row2, from_=1, to=168, textvariable=self.forecast_horizon_var,
-                    width=5).pack(side='left', padx=5)
+        forecast_spinbox = ttk.Spinbox(row2, from_=1, to=168, textvariable=self.forecast_horizon_var,
+                                       width=5, state="readonly")
+        forecast_spinbox.pack(side='left', padx=5)
 
         # ✅ СОХРАНЯЕМ ПРОГРЕСС-БАР (СУЩЕСТВУЮЩИЙ КОД)
         progress_frame = ttk.Frame(params_frame)
@@ -252,7 +266,7 @@ class AirQualityAnalyzerGUI:
         results_frame = ttk.LabelFrame(self.analysis_tab, text="Результаты анализа", padding=10)
         results_frame.pack(fill='both', expand=True, padx=5, pady=5)
 
-        self.analysis_text = scrolledtext.ScrolledText(results_frame, height=15, width=100)
+        self.analysis_text = scrolledtext.ScrolledText(results_frame, height=15, width=100, state="disabled")
         self.analysis_text.pack(fill='both', expand=True)
 
     def setup_visualization_tab(self):
@@ -271,12 +285,12 @@ class AirQualityAnalyzerGUI:
         ttk.Label(params_row, text="Показатель:").pack(side='left', padx=5)
         self.viz_pollutant_var = tk.StringVar(value="so2")
         viz_pollutant_combo = ttk.Combobox(params_row, textvariable=self.viz_pollutant_var,
-                                           values=["so2", "no2", "rspm", "spm", "pm2_5"])
+                                           values=["so2", "no2", "rspm", "spm", "pm2_5"], state="readonly")
         viz_pollutant_combo.pack(side='left', padx=5)
 
         ttk.Label(params_row, text="Регион:").pack(side='left', padx=5)
         self.viz_region_var = tk.StringVar(value="Все регионы")
-        self.viz_region_combo = ttk.Combobox(params_row, textvariable=self.viz_region_var)
+        self.viz_region_combo = ttk.Combobox(params_row, textvariable=self.viz_region_var, state="readonly")
         self.viz_region_combo.pack(side='left', padx=5)
 
         # Строка временного фильтра
@@ -290,18 +304,17 @@ class AirQualityAnalyzerGUI:
         date_frame.pack(side='left', padx=5)
 
         ttk.Label(date_frame, text="Нач. дата:").pack(side='left')
-        self.start_date_var = tk.StringVar()
-        ttk.Entry(date_frame, textvariable=self.start_date_var, width=12).pack(side='left', padx=2)
+        self.start_date_entry = DateEntry(date_frame, width=12, background='darkblue',
+                                          foreground='white', borderwidth=2, date_pattern='y-mm-dd')
+        self.start_date_entry.pack(side='left', padx=2)
 
         ttk.Label(date_frame, text="Кон. дата:").pack(side='left', padx=(10, 0))
-        self.end_date_var = tk.StringVar()
-        ttk.Entry(date_frame, textvariable=self.end_date_var, width=12).pack(side='left', padx=2)
+        self.end_date_entry = DateEntry(date_frame, width=12, background='darkblue',
+                                        foreground='white', borderwidth=2, date_pattern='y-mm-dd')
+        self.end_date_entry.pack(side='left', padx=2)
 
         ttk.Button(time_row, text="Применить фильтр",
                    command=self.apply_viz_filters).pack(side='left', padx=10)
-
-        # Подсказка по формату дат
-        ttk.Label(time_row, text="Формат: ГГГГ-ММ-ДД", foreground="gray").pack(side='left', padx=5)
 
         # Строка кнопок графиков
         buttons_row = ttk.Frame(control_frame)
@@ -350,7 +363,7 @@ class AirQualityAnalyzerGUI:
         summary_frame.pack(fill='both', expand=True, padx=5, pady=5)
 
         # СОЗДАЕМ self.summary_text
-        self.summary_text = scrolledtext.ScrolledText(summary_frame, height=20, width=100)
+        self.summary_text = scrolledtext.ScrolledText(summary_frame, height=20, width=100, state="disabled")
         self.summary_text.pack(fill='both', expand=True)
 
     def export_full_forecast(self):
@@ -604,29 +617,37 @@ class AirQualityAnalyzerGUI:
             messagebox.showwarning("Предупреждение", "Сначала загрузите данные")
             return
 
-        def forecast_analysis():
-            self.update_progress(20, "Подготовка данных...")
-            horizon = int(self.forecast_horizon_var.get())
-            forecast_method = self.forecast_method_var.get()  # ✅ Получаем выбранный метод
-            analysis_data = data.copy()
+        def analyze_forecast(self):
+            """Прогнозирование в отдельном потоке"""
+            data = self.get_filtered_data()
+            if data is None:
+                messagebox.showwarning("Предупреждение", "Сначала загрузите данные")
+                return
 
-            if 'date' in analysis_data.columns:
-                analysis_data = analysis_data.rename(columns={'date': 'timestamp'})
+            def forecast_analysis():
+                self.update_progress(20, "Подготовка данных...")
+                horizon = int(self.forecast_horizon_var.get())
+                # ИСПОЛЬЗУЕМ ФИКСИРОВАННЫЙ МЕТОД ПРОГНОЗИРОВАНИЯ
+                forecast_method = "hybrid"  # Фиксированный метод
+                analysis_data = data.copy()
 
-            self.update_progress(40, f"Построение прогноза ({forecast_method})...")
+                if 'date' in analysis_data.columns:
+                    analysis_data = analysis_data.rename(columns={'date': 'timestamp'})
 
-            # ✅ Используем выбранный метод прогнозирования
-            result = ac.predict_future_levels(
-                analysis_data,
-                self.pollutant_var.get(),
-                forecast_horizon=horizon,
-                method=forecast_method  # ✅ Передаем выбранный метод
-            )
-            self.update_progress(80, "Формирование результатов...")
-            return result
+                self.update_progress(40, f"Построение прогноза ({forecast_method})...")
 
-        self.analyze_in_thread(forecast_analysis, "прогнозирование")
-        self.pending_update = self.display_forecast_results
+                # ✅ Используем фиксированный метод прогнозирования
+                result = ac.predict_future_levels(
+                    analysis_data,
+                    self.pollutant_var.get(),
+                    forecast_horizon=horizon,
+                    method=forecast_method  # ✅ Передаем фиксированный метод
+                )
+                self.update_progress(80, "Формирование результатов...")
+                return result
+
+            self.analyze_in_thread(forecast_analysis, "прогнозирование")
+            self.pending_update = self.display_forecast_results
 
     def calculate_aqi(self):
         """Расчет AQI в отдельном потоке"""
@@ -662,6 +683,7 @@ class AirQualityAnalyzerGUI:
 
     def display_trends_results(self, trends):
         """Отображение результатов анализа трендов"""
+        self.analysis_text.config(state="normal")
         if not trends or 'error' in trends:
             result_text = "❌ Не удалось выполнить анализ трендов\n"
             if trends and 'error' in trends:
@@ -687,9 +709,11 @@ class AirQualityAnalyzerGUI:
 
         self.analysis_text.delete(1.0, tk.END)
         self.analysis_text.insert(1.0, result_text)
+        self.analysis_text.config(state="disabled")
 
     def display_forecast_results(self, forecast):
         """Отображение результатов прогнозирования"""
+        self.analysis_text.config(state="normal")
         if not forecast or 'error' in forecast:
             result_text = "❌ Не удалось выполнить прогнозирование\n"
             if forecast and 'error' in forecast:
@@ -749,9 +773,11 @@ class AirQualityAnalyzerGUI:
         current_text = self.analysis_text.get(1.0, tk.END)
         self.analysis_text.delete(1.0, tk.END)
         self.analysis_text.insert(1.0, current_text + "\n\n" + result_text)
+        self.analysis_text.config(state="disabled")
 
     def display_aqi_results(self, aqi_results):
         """Отображение результатов AQI"""
+        self.analysis_text.config(state="normal")
         if not aqi_results:
             result_text = "❌ Не удалось рассчитать AQI\n"
             result_text += "Проверьте наличие данных по SO2, NO2, PM2.5, PM10.\n"
@@ -778,9 +804,11 @@ class AirQualityAnalyzerGUI:
         current_text = self.analysis_text.get(1.0, tk.END)
         self.analysis_text.delete(1.0, tk.END)
         self.analysis_text.insert(1.0, current_text + "\n\n" + result_text)
+        self.analysis_text.config(state="disabled")
 
     def display_seasonal_results(self, seasonal):
         """Отображение результатов сезонного анализа"""
+        self.analysis_text.config(state="normal")
         if not seasonal or 'error' in seasonal:
             result_text = "❌ Не удалось выполнить сезонный анализ\n"
             if seasonal and 'error' in seasonal:
@@ -814,6 +842,7 @@ class AirQualityAnalyzerGUI:
         current_text = self.analysis_text.get(1.0, tk.END)
         self.analysis_text.delete(1.0, tk.END)
         self.analysis_text.insert(1.0, current_text + "\n\n" + result_text)
+        self.analysis_text.config(state="disabled")
 
     def load_data(self):
         """Загрузка данных из CSV файла"""
@@ -837,6 +866,7 @@ class AirQualityAnalyzerGUI:
                 return
 
             # Обновление информации
+            self.file_label.config(text=f"Загружено: {os.path.basename(file_path)}")
             self.update_data_info(validation_report)
 
             # Обновление treeview
@@ -855,6 +885,7 @@ class AirQualityAnalyzerGUI:
 
     def update_data_info(self, validation_report):
         """Обновление информации о данных"""
+        self.info_text.config(state="normal")
         info_text = f"✅ Успешно загружено: {validation_report['records_loaded']} записей\n"
 
         if 'data_period' in validation_report and validation_report['data_period']:
@@ -875,6 +906,7 @@ class AirQualityAnalyzerGUI:
 
         self.info_text.delete(1.0, tk.END)
         self.info_text.insert(1.0, info_text)
+        self.info_text.config(state="disabled")
 
     def update_regions(self):
         """Обновление списка регионов"""
@@ -915,16 +947,16 @@ class AirQualityAnalyzerGUI:
         # Выбор источника фильтров
         if use_viz_filters:
             region_var = self.viz_region_var
-            start_date_var = self.start_date_var
-            end_date_var = self.end_date_var
+            start_date = self.start_date_entry.get_date()  # Используем календарь
+            end_date = self.end_date_entry.get_date()  # Используем календарь
         elif use_data_filters:
             region_var = self.data_region_var
-            start_date_var = self.data_start_date_var
-            end_date_var = self.data_end_date_var
+            start_date = self.data_start_date_entry.get_date()  # Используем календарь для данных
+            end_date = self.data_end_date_entry.get_date()  # Используем календарь для данных
         else:
             region_var = self.region_var
-            start_date_var = tk.StringVar()  # Пустые для анализа
-            end_date_var = tk.StringVar()
+            start_date = None
+            end_date = None
 
         # Фильтрация по региону
         current_region = region_var.get()
@@ -938,9 +970,6 @@ class AirQualityAnalyzerGUI:
         # Фильтрация по дате
         if (use_viz_filters or use_data_filters) and 'date' in filtered_data.columns:
             try:
-                start_date = start_date_var.get()
-                end_date = end_date_var.get()
-
                 if start_date:
                     start_dt = pd.to_datetime(start_date)
                     filtered_data = filtered_data[filtered_data['date'] >= start_dt]
@@ -960,18 +989,30 @@ class AirQualityAnalyzerGUI:
         if filtered_data is not None:
             # Обновляем информацию о данных
             self.update_filtered_data_info(filtered_data)
-
             # Обновляем treeview
             self.update_data_treeview(filtered_data)
 
-            messagebox.showinfo("Успех", f"Фильтры применены. Отобрано записей: {len(filtered_data)}")
+            # Показываем информацию о примененных фильтрах
+            start_date = self.data_start_date_entry.get_date()
+            end_date = self.data_end_date_entry.get_date()
+
+            filter_info = f"Фильтры применены. Отобрано записей: {len(filtered_data)}"
+            if start_date or end_date:
+                filter_info += f"\nПериод: {start_date if start_date else 'начало'} - {end_date if end_date else 'конец'}"
+            if self.data_region_var.get() != "Все регионы":
+                filter_info += f"\nРегион: {self.data_region_var.get()}"
+
+            messagebox.showinfo("Успех", filter_info)
 
     def reset_data_filters(self):
         """Сбросить фильтры данных"""
         self.data_region_var.set("Все регионы")
         self.data_pollutant_var.set("Все показатели")
-        self.data_start_date_var.set("")
-        self.data_end_date_var.set("")
+
+        # Сброс календарей на текущую дату
+        today = datetime.now().date()
+        self.data_start_date_entry.set_date(today)
+        self.data_end_date_entry.set_date(today)
 
         # Обновляем информацию и treeview
         self.update_data_info({'records_loaded': len(self.data) if self.data else 0})
@@ -1011,7 +1052,7 @@ class AirQualityAnalyzerGUI:
     def update_data_treeview(self, data=None):
         """Обновление отображения данных в treeview"""
         if data is None:
-            data = self.data
+            data = self.data  # Если не переданы данные, используем исходные
 
         if data is None:
             return
@@ -1020,13 +1061,7 @@ class AirQualityAnalyzerGUI:
         for item in self.data_tree.get_children():
             self.data_tree.delete(item)
 
-        # Фильтрация по показателю если выбран
-        pollutant = self.data_pollutant_var.get()
-        if pollutant != "Все показатели" and pollutant in data.columns:
-            # Показываем только записи с данными по выбранному показателю
-            data = data[data[pollutant].notna()]
-
-        # Добавление записей для предпросмотра (максимум 100)
+        # Добавление записей для предпросмотра (первые 100 записей)
         preview_data = data.head(100)
 
         for _, row in preview_data.iterrows():
@@ -1330,6 +1365,7 @@ class AirQualityAnalyzerGUI:
 
     def show_summary(self):
         """Показать сводный отчет"""
+        self.summary_text.config(state="normal")
         if self.data is None:
             messagebox.showwarning("Предупреждение", "Сначала загрузите данные")
             return
@@ -1364,6 +1400,7 @@ class AirQualityAnalyzerGUI:
 
             self.summary_text.delete(1.0, tk.END)
             self.summary_text.insert(1.0, summary_text)
+            self.summary_text.config(state="disabled")
 
         except Exception as e:
             messagebox.showerror("Ошибка", f"Ошибка создания отчета: {str(e)}")
@@ -1383,6 +1420,134 @@ class AirQualityAnalyzerGUI:
         else:
             return str(obj)
 
+    def apply_outlier_processing(self):
+        """Обработка выбросов в данных"""
+        if self.data is None:
+            messagebox.showwarning("Предупреждение", "Сначала загрузите данные")
+            return
+
+        try:
+            pollutant = self.pollutant_var.get()
+            method = self.outlier_method_var.get()
+            sensitivity = self.outlier_sensitivity_var.get()
+
+            if method == "MAD":
+                cleaned_data, stats = dm.detect_anomalies_mad(self.data, pollutant, sensitivity)
+            elif method == "IQR":
+                cleaned_data, stats = self.detect_anomalies_iqr(self.data, pollutant)  # ДОБАВИТЬ self.
+            elif method == "Z-score":
+                cleaned_data, stats = self.detect_anomalies_zscore(self.data, pollutant)  # ДОБАВИТЬ self.
+            else:
+                messagebox.showerror("Ошибка", "Неизвестный метод обработки выбросов")
+                return
+
+            if 'error' in stats:
+                messagebox.showerror("Ошибка", stats['error'])
+                return
+
+            # Обновляем данные
+            self.data = cleaned_data
+            self.update_data_treeview()
+
+            messagebox.showinfo("Успех",
+                                f"Обработка выбросов завершена.\n"
+                                f"Удалено аномалий: {stats['anomalies_detected']}\n"
+                                f"Процент аномалий: {stats['anomaly_percentage']:.1f}%")
+
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Ошибка обработки выбросов: {str(e)}")
+
+    def detect_anomalies_zscore(self, data, pollutant_column, threshold=3):
+        """Обнаружение аномалий методом Z-score"""
+        if pollutant_column not in data.columns:
+            return data, {'error': f'Колонка {pollutant_column} не найдена'}
+
+        working_data = data.copy()
+        working_data = working_data.dropna(subset=[pollutant_column])
+
+        if len(working_data) == 0:
+            return data, {'error': 'Нет данных для анализа'}
+
+        mean = working_data[pollutant_column].mean()
+        std = working_data[pollutant_column].std()
+
+        z_scores = (working_data[pollutant_column] - mean) / std
+        anomalies_mask = abs(z_scores) > threshold
+
+        clean_data = working_data[~anomalies_mask]
+        anomalies_data = working_data[anomalies_mask]
+
+        stats = {
+            'anomalies_detected': len(anomalies_data),
+            'anomaly_percentage': (len(anomalies_data) / len(working_data)) * 100,
+            'threshold_used': threshold
+        }
+
+        return clean_data, stats
+
+    def detect_anomalies_iqr(self, data, pollutant_column):
+        """Обнаружение аномалий методом IQR"""
+        if pollutant_column not in data.columns:
+            return data, {'error': f'Колонка {pollutant_column} не найдена'}
+
+        working_data = data.copy()
+        working_data = working_data.dropna(subset=[pollutant_column])
+
+        if len(working_data) == 0:
+            return data, {'error': 'Нет данных для анализа'}
+
+        Q1 = working_data[pollutant_column].quantile(0.25)
+        Q3 = working_data[pollutant_column].quantile(0.75)
+        IQR = Q3 - Q1
+
+        lower_bound = Q1 - 1.5 * IQR
+        upper_bound = Q3 + 1.5 * IQR
+
+        anomalies_mask = (working_data[pollutant_column] < lower_bound) | (working_data[pollutant_column] > upper_bound)
+        clean_data = working_data[~anomalies_mask]
+        anomalies_data = working_data[anomalies_mask]
+
+        stats = {
+            'anomalies_detected': len(anomalies_data),
+            'anomaly_percentage': (len(anomalies_data) / len(working_data)) * 100,
+            'bounds': {'lower': lower_bound, 'upper': upper_bound}
+        }
+
+        return clean_data, stats
+
+    def detect_anomalies_zscore(self, data, pollutant_column, threshold=3):
+        """Обнаружение аномалий методом Z-score"""
+        if pollutant_column not in data.columns:
+            return data, {'error': f'Колонка {pollutant_column} не найдена'}
+
+        working_data = data.copy()
+        working_data = working_data.dropna(subset=[pollutant_column])
+
+        if len(working_data) == 0:
+            return data, {'error': 'Нет данных для анализа'}
+
+        mean = working_data[pollutant_column].mean()
+        std = working_data[pollutant_column].std()
+
+        z_scores = (working_data[pollutant_column] - mean) / std
+        anomalies_mask = abs(z_scores) > threshold
+
+        clean_data = working_data[~anomalies_mask]
+        anomalies_data = working_data[anomalies_mask]
+
+        stats = {
+            'anomalies_detected': len(anomalies_data),
+            'anomaly_percentage': (len(anomalies_data) / len(working_data)) * 100,
+            'threshold_used': threshold
+        }
+
+        return clean_data, stats
+
+    def reset_data_filters(self):
+        """Сбросить все фильтры данных"""
+        if self.data is not None:
+            self.update_data_treeview(self.data)
+            messagebox.showinfo("Успех", "Фильтры сброшены. Отображаются все данные")
 
 def main():
     """Запуск GUI приложения"""
