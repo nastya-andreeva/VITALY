@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import threading
+import matplotlib.dates as mdates
 import time
 from datetime import datetime, timedelta
 import numpy as np
@@ -1053,28 +1054,77 @@ class AirQualityAnalyzerGUI:
             self.viz_pollutant_var.set(available_pollutants[0])
 
     def plot_timeseries(self):
-        """Построение упрощенного графика временного ряда"""
+        """Построение графика временного ряда"""
         data = self.get_filtered_data(use_viz_filters=True)
         if data is None:
             messagebox.showwarning("Предупреждение", "Сначала загрузите данные")
             return
 
         pollutant = self.viz_pollutant_var.get()
-        region = self.viz_region_var.get()
-
-        # Формируем текст периода
-        period_text = ""
-        if self.start_date_var.get() or self.end_date_var.get():
-            start = self.start_date_var.get() or "начало"
-            end = self.end_date_var.get() or "конец"
-            period_text = f"[{start} - {end}]"
 
         try:
-            fig = ve.create_simple_timeseries_plot(data, pollutant, region, period_text)
-            if fig:
-                self.display_plot(fig)
-            else:
-                messagebox.showwarning("Предупреждение", "Не удалось построить график. Проверьте данные.")
+            # Создание графика
+            fig, ax = plt.subplots(figsize=(12, 6))
+
+            if 'date' in data.columns:
+                valid_data = data[['date', pollutant]].dropna().sort_values('date')
+
+                if len(valid_data) > 0:
+                    ax.plot(valid_data['date'], valid_data[pollutant],
+                            alpha=0.7, linewidth=1, label=pollutant, color='steelblue')
+
+                    # УЛУЧШЕННОЕ ФОРМАТИРОВАНИЕ ОСИ ВРЕМЕНИ
+                    dates = valid_data['date']
+                    min_date = dates.min()
+                    max_date = dates.max()
+                    date_range = max_date - min_date
+
+                    # Автоматический подбор формата в зависимости от диапазона дат
+                    if date_range.days > 365 * 2:  # Более 2 лет
+                        ax.xaxis.set_major_locator(mdates.YearLocator(1))
+                        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+                    elif date_range.days > 180:  # 6 месяцев - 2 года
+                        ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
+                        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+                    elif date_range.days > 60:  # 2-6 месяцев
+                        ax.xaxis.set_major_locator(mdates.MonthLocator(interval=1))
+                        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+                    elif date_range.days > 30:  # 1-2 месяца
+                        ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=2))
+                        ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d'))
+                    elif date_range.days > 7:  # 1 неделя - 1 месяц
+                        ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=1))
+                        ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d'))
+                    else:  # Менее 1 недели
+                        ax.xaxis.set_major_locator(mdates.DayLocator(interval=1))
+                        ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
+
+                    # Устанавливаем rotation для всех подписей
+                    plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
+
+                    region_info = f" ({self.viz_region_var.get()})" if self.viz_region_var.get() != "Все регионы" else ""
+                    time_info = ""
+                    if self.start_date_var.get() or self.end_date_var.get():
+                        start = self.start_date_var.get() or "начало"
+                        end = self.end_date_var.get() or "конец"
+                        time_info = f" [{start} - {end}]"
+
+                    ax.set_title(f'Временной ряд: {pollutant}{region_info}{time_info}')
+                    ax.set_xlabel('Дата')
+                    ax.set_ylabel('Концентрация')
+                    ax.legend()
+                    ax.grid(True, alpha=0.3)
+
+                    # Автоматическое调整布局
+                    plt.tight_layout()
+
+                else:
+                    messagebox.showwarning("Предупреждение", "Нет данных для построения графика")
+                    return
+
+            # Отображение в GUI
+            self.display_plot(fig)
+
         except Exception as e:
             messagebox.showerror("Ошибка", f"Ошибка построения графика: {str(e)}")
 
