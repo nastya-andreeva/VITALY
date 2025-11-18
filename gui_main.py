@@ -1021,9 +1021,21 @@ class AirQualityAnalyzerGUI:
             info_text += f"📅 Период: {filtered_data['date'].min()} - {filtered_data['date'].max()}\n"
 
         region_info = f" ({self.data_region_var.get()})" if self.data_region_var.get() != "Все регионы" else ""
-        info_text += f"📍 Регион: {self.data_region_var.get()}{region_info}\n\n"
+        info_text += f"📍 Регион: {self.data_region_var.get()}{region_info}\n"
 
-        # Статистика по показателям
+        # ДОБАВЛЯЕМ ИНФОРМАЦИЮ О ВЫБРАННОМ ПОКАЗАТЕЛЕ
+        pollutant = self.data_pollutant_var.get()
+        if pollutant != "Все показатели" and pollutant in filtered_data.columns:
+            non_null = filtered_data[pollutant].notna().sum()
+            percentage = (non_null / len(filtered_data)) * 100 if len(filtered_data) > 0 else 0
+            if non_null > 0:
+                avg = filtered_data[pollutant].mean()
+                info_text += f"📊 Показатель: {pollutant} - {non_null} записей ({percentage:.1f}%), среднее: {avg:.2f}\n\n"
+        else:
+            info_text += f"📊 Показатель: {pollutant}\n\n"
+
+        # Статистика по всем показателям (оставляем для полноты информации)
+        info_text += "Статистика по всем показателям:\n"
         numeric_columns = ['so2', 'no2', 'rspm', 'spm', 'pm2_5']
         for col in numeric_columns:
             if col in filtered_data.columns:
@@ -1031,7 +1043,7 @@ class AirQualityAnalyzerGUI:
                 percentage = (non_null / len(filtered_data)) * 100 if len(filtered_data) > 0 else 0
                 if non_null > 0:
                     avg = filtered_data[col].mean()
-                    info_text += f"{col}: {non_null} записей ({percentage:.1f}%), среднее: {avg:.2f}\n"
+                    info_text += f"  {col}: {non_null} зап. ({percentage:.1f}%), ср.: {avg:.2f}\n"
 
         self.info_text.delete(1.0, tk.END)
         self.info_text.insert(1.0, info_text)
@@ -1428,7 +1440,12 @@ class AirQualityAnalyzerGUI:
             return
 
         try:
-            pollutant = self.pollutant_var.get()
+            pollutant = self.data_pollutant_var.get()
+
+            if pollutant == "Все показатели":
+                messagebox.showwarning("Предупреждение", "Выберите конкретный показатель для обработки выбросов")
+                return
+
             method = self.outlier_method_var.get()
             sensitivity = self.outlier_sensitivity_var.get()
 
