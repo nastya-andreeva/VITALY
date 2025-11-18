@@ -333,13 +333,163 @@ class AirQualityAnalyzerGUI:
                    command=self.export_plots).pack(side='left', padx=5)
         ttk.Button(export_frame, text="Сводный отчет",
                    command=self.show_summary).pack(side='left', padx=5)
+        # НОВАЯ КНОПКА для экспорта полного прогноза
+        ttk.Button(export_frame, text="Экспорт полного прогноза",
+                   command=self.export_full_forecast).pack(side='left', padx=5)
 
-        # Фрейм сводного отчета
+        # Фрейм сводного отчета - ИСПРАВЛЕНО: создаем self.summary_text
         summary_frame = ttk.LabelFrame(self.results_tab, text="Сводный отчет", padding=10)
         summary_frame.pack(fill='both', expand=True, padx=5, pady=5)
 
+        # СОЗДАЕМ self.summary_text
         self.summary_text = scrolledtext.ScrolledText(summary_frame, height=20, width=100)
         self.summary_text.pack(fill='both', expand=True)
+
+    def export_full_forecast(self):
+        """Экспорт полного прогноза в CSV"""
+        if 'forecast' not in self.analysis_results:
+            messagebox.showwarning("Предупреждение", "Нет данных прогноза для экспорта")
+            return
+
+        try:
+            file_path = filedialog.asksaveasfilename(
+                defaultextension=".csv",
+                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+                title="Сохранить полный прогноз"
+            )
+
+            if file_path:
+                forecast_data = self.analysis_results['forecast']
+
+                if 'final_forecast' in forecast_data and 'forecast_dates' in forecast_data:
+                    # Создаем DataFrame с полным прогнозом
+                    df = pd.DataFrame({
+                        'datetime': forecast_data['forecast_dates'],
+                        'forecast': forecast_data['final_forecast']
+                    })
+
+                    # Добавляем дополнительные методы прогнозирования если есть
+                    if 'all_predictions' in forecast_data:
+                        for method, values in forecast_data['all_predictions'].items():
+                            if len(values) == len(df):
+                                df[f'forecast_{method}'] = values
+
+                    df.to_csv(file_path, index=False, encoding='utf-8')
+                    messagebox.showinfo("Успех", f"Полный прогноз экспортирован: {file_path}")
+                else:
+                    messagebox.showwarning("Предупреждение", "Нет данных для экспорта")
+
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Ошибка экспорта: {str(e)}")
+
+    def show_summary(self):
+        """Показать сводный отчет"""
+        if self.data is None:
+            messagebox.showwarning("Предупреждение", "Сначала загрузите данные")
+            return
+
+        try:
+            summary_text = "📊 СВОДНЫЙ ОТЧЕТ ПО АНАЛИЗУ КАЧЕСТВА ВОЗДУХА\n\n"
+            summary_text += "=" * 50 + "\n\n"
+
+            # Информация о данных
+            summary_text += "📁 ДАННЫЕ:\n"
+            summary_text += f"• Записей: {len(self.data)}\n"
+            if 'date' in self.data.columns:
+                min_date = self.data['date'].min()
+                max_date = self.data['date'].max()
+                summary_text += f"• Период: {min_date} - {max_date}\n"
+                summary_text += f"• Дней данных: {(max_date - min_date).days}\n"
+            summary_text += f"• Целевой показатель: {self.pollutant_var.get()}\n"
+            summary_text += f"• Регион: {self.region_var.get()}\n\n"
+
+            # Статистика по данным
+            summary_text += "📈 СТАТИСТИКА ДАННЫХ:\n"
+            pollutant = self.pollutant_var.get()
+            if pollutant in self.data.columns:
+                data_stats = self.data[pollutant].describe()
+                summary_text += f"• Среднее: {data_stats.get('mean', 0):.2f}\n"
+                summary_text += f"• Медиана: {data_stats.get('50%', 0):.2f}\n"
+                summary_text += f"• Стандартное отклонение: {data_stats.get('std', 0):.2f}\n"
+                summary_text += f"• Минимум: {data_stats.get('min', 0):.2f}\n"
+                summary_text += f"• Максимум: {data_stats.get('max', 0):.2f}\n"
+                summary_text += f"• Непустых значений: {self.data[pollutant].notna().sum()}\n\n"
+
+            # Результаты анализа
+            summary_text += "🔍 РЕЗУЛЬТАТЫ АНАЛИЗА:\n"
+
+            if 'trends' in self.analysis_results:
+                trends = self.analysis_results['trends']
+                direction = trends.get('overall_direction', 'Не определен')
+                change_pct = trends.get('change_percentage', 0)
+                summary_text += f"• Тренд: {direction} ({change_pct:+.2f}%)\n"
+
+            if 'aqi' in self.analysis_results and 'overall' in self.analysis_results['aqi']:
+                aqi = self.analysis_results['aqi']['overall']
+                summary_text += f"• Общий AQI: {aqi.get('aqi', 'N/A')} ({aqi.get('category', 'N/A')})\n"
+                summary_text += f"• Основной загрязнитель: {aqi.get('dominant_pollutant', 'N/A')}\n"
+
+            if 'forecast' in self.analysis_results:
+                forecast = self.analysis_results['forecast']
+                horizon = forecast.get('forecast_horizon', 'N/A')
+                if 'forecast_stats' in forecast:
+                    stats = forecast['forecast_stats']
+                    summary_text += f"• Прогноз ({horizon} ч): среднее {stats.get('mean', 0):.2f} "
+                    summary_text += f"(диапазон: {stats.get('min', 0):.2f}-{stats.get('max', 0):.2f})\n"
+
+            if 'seasonal' in self.analysis_results:
+                seasonal = self.analysis_results['seasonal']
+                if 'peak_hour' in seasonal:
+                    peak = seasonal['peak_hour']
+                    summary_text += f"• Пиковый час: {peak.get('hour', 'N/A')}:00 "
+                    summary_text += f"({peak.get('concentration', 0):.2f})\n"
+
+            summary_text += "\n" + "=" * 50 + "\n"
+            summary_text += f"Отчет сгенерирован: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+
+            # Очищаем и вставляем текст
+            self.summary_text.delete(1.0, tk.END)
+            self.summary_text.insert(1.0, summary_text)
+
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Ошибка создания отчета: {str(e)}")
+
+    def export_full_forecast(self):
+        """Экспорт полного прогноза в CSV"""
+        if 'forecast' not in self.analysis_results:
+            messagebox.showwarning("Предупреждение", "Нет данных прогноза для экспорта")
+            return
+
+        try:
+            file_path = filedialog.asksaveasfilename(
+                defaultextension=".csv",
+                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+                title="Сохранить полный прогноз"
+            )
+
+            if file_path:
+                forecast_data = self.analysis_results['forecast']
+
+                if 'final_forecast' in forecast_data and 'forecast_dates' in forecast_data:
+                    # Создаем DataFrame с полным прогнозом
+                    df = pd.DataFrame({
+                        'datetime': forecast_data['forecast_dates'],
+                        'forecast': forecast_data['final_forecast']
+                    })
+
+                    # Добавляем дополнительные методы прогнозирования если есть
+                    if 'all_predictions' in forecast_data:
+                        for method, values in forecast_data['all_predictions'].items():
+                            if len(values) == len(df):
+                                df[f'forecast_{method}'] = values
+
+                    df.to_csv(file_path, index=False, encoding='utf-8')
+                    messagebox.showinfo("Успех", f"Полный прогноз экспортирован: {file_path}")
+                else:
+                    messagebox.showwarning("Предупреждение", "Нет данных для экспорта")
+
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Ошибка экспорта: {str(e)}")
 
     def update_progress(self, value, label=""):
         """Обновление прогресс-бара"""
@@ -547,15 +697,41 @@ class AirQualityAnalyzerGUI:
                 result_text += f"  Макс: {stats.get('max', 0):.2f}\n"
                 result_text += f"  Станд. откл.: {stats.get('std', 0):.2f}\n"
 
-            # Детальный прогноз по часам
+            # Детальный прогноз по часам - ВЫВОДИМ ВСЕ ЧАСЫ ИЛИ РАЗУМНОЕ КОЛИЧЕСТВО
             if 'final_forecast' in forecast and 'forecast_dates' in forecast:
-                result_text += f"\nДетальный прогноз (первые 12 часов):\n"
-                forecasts = forecast['final_forecast'][:12]
-                dates = forecast['forecast_dates'][:12]
+                forecast_horizon = forecast.get('forecast_horizon', 24)
 
-                for i, (date, value) in enumerate(zip(dates, forecasts)):
-                    time_str = pd.to_datetime(date).strftime('%m-%d %H:%M')
-                    result_text += f"  {time_str}: {value:.2f}\n"
+                # Если горизонт большой, показываем первые 24 часа и последние 6 часов
+                if forecast_horizon > 30:
+                    result_text += f"\nДетальный прогноз (первые 24 часа и последние 6 часов):\n"
+
+                    # Первые 24 часа
+                    first_forecasts = forecast['final_forecast'][:24]
+                    first_dates = forecast['forecast_dates'][:24]
+
+                    for i, (date, value) in enumerate(zip(first_dates, first_forecasts)):
+                        time_str = pd.to_datetime(date).strftime('%m-%d %H:%M')
+                        result_text += f"  {time_str}: {value:.2f}\n"
+
+                    result_text += f"  ... (пропущено {forecast_horizon - 30} часов) ...\n"
+
+                    # Последние 6 часов
+                    last_forecasts = forecast['final_forecast'][-6:]
+                    last_dates = forecast['forecast_dates'][-6:]
+
+                    for i, (date, value) in enumerate(zip(last_dates, last_forecasts)):
+                        time_str = pd.to_datetime(date).strftime('%m-%d %H:%M')
+                        result_text += f"  {time_str}: {value:.2f}\n"
+
+                else:
+                    # Для небольших горизонтов показываем все часы
+                    result_text += f"\nДетальный прогноз (все {forecast_horizon} часов):\n"
+                    forecasts = forecast['final_forecast']
+                    dates = forecast['forecast_dates']
+
+                    for i, (date, value) in enumerate(zip(dates, forecasts)):
+                        time_str = pd.to_datetime(date).strftime('%m-%d %H:%M')
+                        result_text += f"  {time_str}: {value:.2f}\n"
 
             self.analysis_results['forecast'] = forecast
 
