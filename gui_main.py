@@ -476,43 +476,6 @@ class AirQualityAnalyzerGUI:
         except Exception as e:
             messagebox.showerror("Ошибка", f"Ошибка создания отчета: {str(e)}")
 
-    def export_full_forecast(self):
-        """Экспорт полного прогноза в CSV"""
-        if 'forecast' not in self.analysis_results:
-            messagebox.showwarning("Предупреждение", "Нет данных прогноза для экспорта")
-            return
-
-        try:
-            file_path = filedialog.asksaveasfilename(
-                defaultextension=".csv",
-                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
-                title="Сохранить полный прогноз"
-            )
-
-            if file_path:
-                forecast_data = self.analysis_results['forecast']
-
-                if 'final_forecast' in forecast_data and 'forecast_dates' in forecast_data:
-                    # Создаем DataFrame с полным прогнозом
-                    df = pd.DataFrame({
-                        'datetime': forecast_data['forecast_dates'],
-                        'forecast': forecast_data['final_forecast']
-                    })
-
-                    # Добавляем дополнительные методы прогнозирования если есть
-                    if 'all_predictions' in forecast_data:
-                        for method, values in forecast_data['all_predictions'].items():
-                            if len(values) == len(df):
-                                df[f'forecast_{method}'] = values
-
-                    df.to_csv(file_path, index=False, encoding='utf-8')
-                    messagebox.showinfo("Успех", f"Полный прогноз экспортирован: {file_path}")
-                else:
-                    messagebox.showwarning("Предупреждение", "Нет данных для экспорта")
-
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Ошибка экспорта: {str(e)}")
-
     def update_progress(self, value, label=""):
         """Обновление прогресс-бара"""
         self.progress_var.set(value)
@@ -1638,8 +1601,15 @@ class AirQualityAnalyzerGUI:
             self.update_data_treeview(self.data)
             messagebox.showinfo("Успех", "Фильтры сброшены. Отображаются все данные")
 
+
 def main():
     """Запуск GUI приложения"""
+    # Добавьте эту строку для лучшей совместимости с macOS
+    if sys.platform == "darwin":
+        import tkinter.ttk as ttk
+        # Улучшает отображение виджетов на macOS
+        ttk.Style().theme_use('clam')  # или 'aqua'
+
     root = tk.Tk()
     app = AirQualityAnalyzerGUI(root)
     root.mainloop()
